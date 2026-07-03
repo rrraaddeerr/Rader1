@@ -702,7 +702,7 @@
     </div>
     <div style="display:flex;align-items:center;gap:8px">
       <button class="skinbtn" id="skinBtn" aria-label="Skins" title="Skins">🎨</button>
-      <div class="me" id="meChip"><span class="dot">🛹</span><span>Franky</span></div>
+      <div class="me" id="meChip"><span class="dot">🛹</span><span id="meName">Franky</span></div>
     </div>
   </div>
 </header>
@@ -1192,7 +1192,7 @@ const CREW_NOTE={
 };
 
 /* ---------- state ---------- */
-function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
+function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
 function save(){state.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(state));cloudPushSoon();}
 let state=load();
 
@@ -1762,9 +1762,10 @@ function openFamily(){
     ${list.length?list.map(p=>famRow(p,kind)).join(""):`<div class="muted" style="font-size:13px;padding:2px 2px 8px">None yet.</div>`}
     <button class="btn alt" id="${addId}">${addLabel}</button>`;
   $("#sheetPad").innerHTML=`
-    <h2 style="margin:0;font-size:23px;font-weight:900">My family &amp; pals 👪</h2>
+    <h2 style="margin:0;font-size:23px;font-weight:900">${state.familyName?esc(state.familyName)+" 👪":"My family &amp; pals 👪"}</h2>
     <p style="color:var(--ink-soft);margin:6px 0 4px">Make it yours — add the real people in your life, or take any out.</p>
     <div class="safe-note">🛡️ <div>Only people <b>you &amp; a grown-up chose</b>. No strangers, ever — and nobody ever pays anybody.</div></div>
+    ${state.isGrownUp?`<button class="btn cool" id="faBulk" style="margin-top:12px">👪 Add lots of family at once</button>`:""}
     ${sec("Grown-ups","— for “Ask a grown-up”",getAdults(),"adult","faAddAdult","➕ Add a grown-up")}
     ${sec("Cousins &amp; crew","— they style fits for you",getCrew(),"crew","faAddCrew","➕ Add a cousin or crew")}
     ${sec("Pals","— phone them for style help",allFriends(),"pal","faAddPal","➕ Add a pal")}
@@ -1775,6 +1776,7 @@ function openFamily(){
   $("#faAddAdult").onclick=openAddAdult;
   $("#faAddCrew").onclick=openAddCrew;
   $("#faAddPal").onclick=()=>{lastLook=null;openAddFriend();};
+  {const fb=$("#faBulk");if(fb)fb.onclick=openBulkAdd;}
   $("#faDone").onclick=()=>{closeSheet();if($("#view-you").classList.contains("active"))renderYou();};
   openSheet();
 }
@@ -1973,7 +1975,7 @@ function renderSupporter(){
   });
 }
 /* reflect chosen flair on the profile dot in the header */
-function updateMe(){const d=$("#meChip .dot");if(d&&state.flair)d.textContent=state.flair;}
+function updateMe(){const d=$("#meChip .dot");if(d&&state.flair)d.textContent=state.flair;const n=$("#meName");if(n)n.textContent=state.name||"You";}
 
 /* ---------- field report (techy questionnaire) ---------- */
 const REP_BEST=[["🔩","Metal looks"],["🧺","Family Closet"],["🕺","Dress-up avatar"],["👟","Crew fits"],["🎯","Quests"],["📚","Learn lab"]];
@@ -2640,7 +2642,7 @@ function openTryOn(fit){
 function openSheet(){$("#sheetBg").classList.add("open");requestAnimationFrame(()=>$("#sheet").classList.add("open"));}
 function closeSheet(){$("#sheet").classList.remove("open");$("#sheetBg").classList.remove("open");}
 $("#sheetBg").onclick=closeSheet;
-$("#meChip").onclick=()=>toast("Demo: you're Franky 🛹 — a kid-safe view");
+$("#meChip").onclick=()=>openProfile();
 
 function showView(viewId){ $$(".view").forEach(x=>x.classList.remove("active")); const v=$("#"+viewId); if(v)v.classList.add("active"); }
 function showTab(v){
@@ -3023,19 +3025,147 @@ route();  // honor any incoming #look/<id> or #<tab> link (else defaults to Disc
 if(myCode()){cloudPull();pullInbox();}
 
 /* ---------- first-run welcome (kid-friendly tone-setter) ---------- */
-function openWelcome(){
-  $("#sheetPad").innerHTML=`<div style="text-align:left">
-    <div style="text-align:center;font-size:46px">👋</div>
-    <h2 style="text-align:center;margin:6px 0 2px;font-size:24px;font-weight:900">Welcome to <span class="grad-text">Future Outfit</span></h2>
-    <p style="color:var(--ink-soft);text-align:center;margin:0 0 14px">A place to explore your style — no shopping pressure, just you.</p>
-    <div class="know" style="margin-bottom:8px">🛡️ <b>Super safe.</b> You only ever talk to people you <b>and a grown-up</b> chose. No strangers, ever.</div>
-    <div class="know" style="margin-bottom:8px">🤙 <b>Friends &amp; grown-ups help.</b> Stuck on a fit? Ask a grown-up or phone a stylish pal.</div>
-    <div class="know" style="margin-bottom:8px">⭐ <b>Stars are on us.</b> Help pals or share the game to earn Supporter Stars. Kids never pay kids.</div>
-    <button class="btn" id="welcomeGo" style="margin-top:10px">Let's go ✨</button></div>`;
-  $("#welcomeGo").onclick=()=>{localStorage.setItem("fo_welcomed","1");closeSheet();};
+/* ---------- who's using it: people on this device (multi-profile) ----------
+   The app can hold more than one person on a shared phone — e.g. YOU (a grown-up
+   organiser) and Franky. Each person's whole world lives in a saved snapshot; KEY
+   always holds the ACTIVE person, so every save/load/cloud path stays untouched.
+   Most families use one phone per person; this is the bonus for shared devices. */
+const PEOPLE_KEY="fo_people";
+function peopleStore(){ try{return JSON.parse(localStorage.getItem(PEOPLE_KEY))||{};}catch(e){return {};} }
+function savePeople(p){ localStorage.setItem(PEOPLE_KEY, JSON.stringify(p)); }
+function ensurePeople(){
+  const p=peopleStore();
+  if(!Array.isArray(p.list)||!p.list.length){ p.list=[{id:"p1",name:state.name||"",grown:!!state.isGrownUp,code:myCode()||""}]; p.active="p1"; p.snaps=p.snaps||{}; savePeople(p); }
+  return p;
+}
+function syncActivePerson(){ const p=ensurePeople(); const me=p.list.find(x=>x.id===p.active); if(me){ me.name=state.name||me.name; me.grown=!!state.isGrownUp; me.code=myCode()||me.code||""; savePeople(p); } }
+function newId(){ return "p"+((peopleStore().list||[]).length+1)+"x"+(state.updatedAt||0).toString(36).slice(-4); }
+function switchPerson(id){
+  const p=ensurePeople(); if(id===p.active){ closeSheet(); return; }
+  p.snaps=p.snaps||{};
+  syncActivePerson();
+  p.snaps[p.active]=JSON.parse(localStorage.getItem(KEY)||"{}");   // stash current world
+  const target=p.snaps[id];
+  p.active=id; savePeople(p);
+  if(target){ localStorage.setItem(KEY, JSON.stringify(target)); } else { localStorage.removeItem(KEY); }
+  const meta=p.list.find(x=>x.id===id)||{};
+  if(meta.code) localStorage.setItem(PKEY, meta.code); else localStorage.removeItem(PKEY);
+  state=load(); seedFamily();
+  softReload(); updateMe(); closeSheet();
+  if(!state.name){ openSetup(); } else { toast(`Now: ${state.name} ✨`); if(myCode()){cloudPull();pullInbox();} }
+}
+function addPerson(){
+  const p=ensurePeople();
+  syncActivePerson();
+  p.snaps=p.snaps||{}; p.snaps[p.active]=JSON.parse(localStorage.getItem(KEY)||"{}");
+  const id=newId();
+  p.list.push({id,name:"",grown:false,code:""}); p.active=id; savePeople(p);
+  localStorage.removeItem(KEY); localStorage.removeItem(PKEY);
+  state=load(); seedFamily(); softReload(); updateMe();
+  openSetup();
+}
+
+/* ---------- first-run setup: makes the app really YOURS ---------- */
+let setupData;
+function openSetup(){
+  setupData={step:0, name:state.name||"", grown:!!state.isGrownUp, family:state.familyName||"The Paris Family"};
+  renderSetup(); openSheet();
+}
+function renderSetup(){
+  const s=setupData, ist='width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:14px;font:inherit;color:var(--ink);font-size:16px';
+  const lab='font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900';
+  const pad=$("#sheetPad");
+  if(s.step===0){
+    pad.innerHTML=`<div style="text-align:center;font-size:44px">👋</div>
+      <h2 style="text-align:center;margin:6px 0 2px;font-size:24px;font-weight:900">Welcome to <span class="grad-text">Future Outfit</span></h2>
+      <p style="color:var(--ink-soft);text-align:center;margin:0 0 16px">Let's make it yours — 20 seconds.</p>
+      <div class="lab" style="${lab};margin:0 0 6px">What should we call you?</div>
+      <input id="suName" maxlength="24" placeholder="e.g. Rader" value="${esc(s.name)}" style="${ist}">
+      <div class="lab" style="${lab};margin:16px 0 6px">Are you a grown-up or a kid?</div>
+      <div class="filters" id="suWho">
+        <button class="chip" data-g="1" aria-pressed="${s.grown}">🧑 Grown-up</button>
+        <button class="chip" data-g="0" aria-pressed="${!s.grown}">🛹 Kid</button></div>
+      <button class="btn" id="suNext" style="margin-top:18px">Next →</button>`;
+    $$("#suWho .chip").forEach(b=>b.onclick=()=>{s.grown=b.dataset.g==="1";$$("#suWho .chip").forEach(x=>x.setAttribute("aria-pressed",x===b));});
+    $("#suNext").onclick=()=>{ s.name=($("#suName").value||"").trim(); if(!s.name){toast("Pop your name in 🙂");return;} s.step=1; renderSetup(); };
+  } else if(s.step===1){
+    pad.innerHTML=`<div style="text-align:center;font-size:40px">👪</div>
+      <h2 style="text-align:center;margin:6px 0 2px;font-size:23px;font-weight:900">Your family</h2>
+      <p style="color:var(--ink-soft);text-align:center;margin:0 0 16px">This app is a dressing room for <b>your family</b> — swap fits, pass clothes on, hype each other up.</p>
+      <div class="lab" style="${lab};margin:0 0 6px">What's your family called?</div>
+      <input id="suFam" maxlength="30" placeholder="The Paris Family" value="${esc(s.family)}" style="${ist}">
+      <div class="safe-note" style="margin-top:14px">🛡️ <div>Only people <b>you &amp; a grown-up added</b> — no strangers, no money between kids, ever.</div></div>
+      <div class="btnrow" style="margin-top:18px"><button class="btn alt" id="suBack">Back</button><button class="btn" id="suNext">Next →</button></div>`;
+    $("#suBack").onclick=()=>{s.step=0;renderSetup();};
+    $("#suNext").onclick=()=>{ s.family=($("#suFam").value||"").trim()||"My Family"; commitSetup(); s.step=2; renderSetup(); };
+  } else {
+    const grown=s.grown;
+    pad.innerHTML=`<div style="text-align:center;font-size:40px">${grown?"🧑✨":"🛹✨"}</div>
+      <h2 style="text-align:center;margin:6px 0 2px;font-size:23px;font-weight:900">You're in, ${esc(s.name)}!</h2>
+      <p style="color:var(--ink-soft);text-align:center;margin:0 0 16px">Welcome to <b>${esc(s.family)}</b>. Two quick ways to start:</p>
+      ${grown
+        ? `<button class="btn" id="suFam2" style="margin-bottom:10px">👪 Add my family</button>
+           <button class="btn cool" id="suCloset" style="margin-bottom:10px">📸 Add a piece I own</button>`
+        : `<button class="btn cool" id="suCloset" style="margin-bottom:10px">📸 Snap my first piece</button>
+           <div class="know" style="margin-bottom:10px">👪 A grown-up can add your family for you — just ask them to tap <b>My family</b> on your You tab.</div>`}
+      <button class="btn alt" id="suDone">${grown?"I'll do it later →":"Start exploring →"}</button>`;
+    const closet=$("#suCloset"); if(closet) closet.onclick=()=>{ finishSetup(); go("closet"); openAddItem(); };
+    const fam=$("#suFam2"); if(fam) fam.onclick=()=>{ finishSetup(); go("you"); openBulkAdd(); };
+    $("#suDone").onclick=()=>{ finishSetup(); };
+  }
+}
+function commitSetup(){ // persist identity as soon as it's known
+  state.name=setupData.name; state.isGrownUp=setupData.grown; state.familyName=setupData.family;
+  save(); syncActivePerson(); updateMe();
+}
+function finishSetup(){
+  commitSetup();
+  localStorage.setItem("fo_welcomed","1");
+  closeSheet(); updateMe();
+  if($("#view-you").classList.contains("active"))renderYou();
+  toast(`Welcome, ${state.name}! 💛`);
+}
+/* the profile / switch-person sheet (tap your name in the header) */
+function openProfile(){
+  const p=ensurePeople(); syncActivePerson();
+  const others=p.list.filter(x=>x.id!==p.active);
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:23px;font-weight:900">${esc(state.name||"You")} ${state.isGrownUp?"🧑":"🛹"}</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 4px">${state.familyName?esc(state.familyName):"Your family"} · ${state.isGrownUp?"grown-up":"kid"}</p>
+    <button class="btn alt" id="pfEdit" style="margin-top:10px">✏️ Edit my name / role</button>
+    ${others.length?`<div class="lab" style="font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900;margin:16px 0 8px">Switch person</div>
+      ${others.map(o=>`<button class="adult pfSwitch" data-id="${o.id}" style="margin-bottom:8px;width:100%"><span class="ad" style="background:var(--grad-cool)">${o.grown?"🧑":"🛹"}</span><div><div class="an">${esc(o.name||"New person")}</div><div class="ar">tap to switch</div></div></button>`).join("")}`:""}
+    <button class="btn" id="pfAdd" style="margin-top:12px">➕ Add another person</button>
+    <div class="safe-note" style="margin-top:14px">🛡️ <div>Everyone on this phone stays separate. Grown-ups &amp; kids each get their own safe space.</div></div>`;
+  $("#pfEdit").onclick=openSetup;
+  $("#pfAdd").onclick=addPerson;
+  $$("#sheetPad .pfSwitch").forEach(b=>b.onclick=()=>switchPerson(b.dataset.id));
   openSheet();
 }
-if(!localStorage.getItem("fo_welcomed")){setTimeout(openWelcome,350);}
+/* organiser power: add lots of family at once (one name per line) */
+function openBulkAdd(){
+  const lab='font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900';
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:23px;font-weight:900">Add my family 👪</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 4px">Type or paste names — <b>one per line</b>. Great for a big crew (hello, ${esc(state.familyName||"the family")} 👋).</p>
+    <div class="safe-note">🛡️ <div>Only add people you know in real life. As a grown-up, adding them here counts as your OK.</div></div>
+    <textarea id="bulkNames" placeholder="Andre&#10;Tosh&#10;Annalisa&#10;Ben&#10;…" style="width:100%;min-height:150px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:13px;font:inherit;color:var(--ink);margin-top:10px"></textarea>
+    <div class="btnrow" style="margin-top:14px"><button class="btn alt" id="buCancel">Cancel</button><button class="btn" id="buAdd">Add them all</button></div>`;
+  $("#buCancel").onclick=()=>{ if($("#view-you").classList.contains("active"))renderYou(); openFamily(); };
+  $("#buAdd").onclick=()=>{
+    const names=($("#bulkNames").value||"").split(/\n+/).map(n=>n.trim()).filter(Boolean).slice(0,60);
+    if(!names.length){toast("Add at least one name 🙂");return;}
+    state.friends=state.friends||[];
+    const specs=["street","future","avant","maker"];
+    names.forEach((name,i)=>{ const sp=specs[i%specs.length]; state.friends.push({id:"uf"+Date.now()+i,name:name.slice(0,24),rel:"Family",emoji:SPEC_EMOJI[sp],spec:sp,helps:0,hue:SPEC_HUE[sp]}); });
+    save();refreshQuests();
+    toast(`Added ${names.length} to ${state.familyName||"your family"} 🎉`);
+    if($("#view-you").classList.contains("active"))renderYou();
+    openFamily();
+  };
+  openSheet();
+}
+if(!localStorage.getItem("fo_welcomed")){ ensurePeople(); setTimeout(openSetup,350); }
 
 /* ---------- install hint (Add to Home Screen) ---------- */
 let deferredInstall=null;
