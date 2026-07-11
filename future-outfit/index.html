@@ -1192,7 +1192,7 @@ const CREW_NOTE={
 };
 
 /* ---------- state ---------- */
-function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",campResponses:[],myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
+function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",familyCode:"",campResponses:[],myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
 function save(){state.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(state));cloudPushSoon();}
 let state=load();
 
@@ -1743,11 +1743,15 @@ function renderFamilyBox(){
   box.innerHTML=`<button class="teaser" id="goFamily" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
     <span class="ti">👪</span>
     <div><b>My family &amp; pals</b><div style="color:var(--ink-soft);font-size:13px">${n} ${n===1?"person":"people"} you can ask, phone or get fits from — add, rename or remove anyone. <b style="color:var(--ink)">Open →</b></div></div></button>`
+    + `<button class="teaser" id="goBoard" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    <span class="ti">💬</span>
+    <div><b>${state.familyName?esc(state.familyName)+" Board":"Family Board"}</b><div style="color:var(--ink-soft);font-size:13px">One group chat for the whole family — everyone sees it, no private DMs. ${state.familyCode?`<b style="color:var(--ink)">Open →</b>`:`<b style="color:var(--ink)">Set it up →</b>`}</div></div></button>`
     + (state.isGrownUp?`<button class="teaser" id="goCamp" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
     <span class="ti">📋</span>
     <div><b>Family sign-up &amp; feedback</b><div style="color:var(--ink-soft);font-size:13px">Pass your phone around — everyone adds themselves &amp; answers a few quick Qs. Works with no signal.${nr?` <b style="color:var(--ink)">${nr} so far →</b>`:` <b style="color:var(--ink)">Start →</b>`}</div></div></button>`:"");
   $("#goFamily").onclick=openFamily;
   {const gc=$("#goCamp");if(gc)gc.onclick=openCampSignup;}
+  {const bd=$("#goBoard");if(bd)bd.onclick=openFamilyBoard;}
 }
 
 /* ---------- Family sign-up & feedback: pass-the-phone questionnaire ----------
@@ -1827,6 +1831,109 @@ function openCampResults(){
     if(navigator.clipboard)navigator.clipboard.writeText(txt);
     toast("Copied — paste it anywhere 📋");
   };
+  openSheet();
+}
+
+/* ---------- Family Board: ONE group thread for the whole family ----------
+   GROUP-ONLY by design. Everyone in the family sees every message; there are NO
+   private messages and no way to DM an individual — so no kid can be messaged on
+   their own. The shared family code (a grown-up sets it up) is the only key.
+   Needs signal (cloud) — at a no-signal campsite it shows a friendly offline note. */
+let boardPoll=null, boardCache=[];
+function stopBoardPoll(){ if(boardPoll){clearInterval(boardPoll);boardPoll=null;} }
+async function boardFetch(){
+  const c=state.familyCode; if(!c)return null;
+  try{ const r=await fetch(`${SYNC_URL}/board/${c}`); if(!r.ok)return null; const d=await r.json(); if(d&&d.ok){boardCache=d.messages||[];return boardCache;} }catch(e){}
+  return null;
+}
+function boardTime(ts){ try{const d=new Date(ts),s=(Date.now()-d.getTime())/1000; if(s<60)return"now"; if(s<3600)return Math.floor(s/60)+"m"; if(s<86400)return Math.floor(s/3600)+"h"; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(e){return"";} }
+function boardBubble(m){
+  const mine=(m.fromName||"")===(state.name||" ");
+  return `<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'};margin-bottom:10px">
+    <div style="font-size:11px;color:var(--ink-dim);margin:0 5px 3px">${m.grown?"🧑":"🛹"} ${esc(m.fromName||'Someone')} · ${boardTime(m.ts)}</div>
+    <div style="max-width:82%;padding:9px 13px;border-radius:15px;font-size:14px;line-height:1.4;background:${mine?'var(--grad-cool)':'var(--panel-2)'};color:${mine?'#0a0a0a':'var(--ink)'};${mine?'border-bottom-right-radius:5px':'border-bottom-left-radius:5px'};word-break:break-word">${esc(m.text)}</div>
+  </div>`;
+}
+function boardRenderThread(msgs,forceBottom){
+  const th=$("#fbThread"); if(!th)return;
+  const atBottom=forceBottom||(th.scrollTop+th.clientHeight>=th.scrollHeight-40);
+  th.innerHTML=(msgs&&msgs.length)?msgs.map(boardBubble).join(""):`<div class="empty" style="padding:26px"><div class="big">💬</div>No messages yet.<br>Say hi to the family 👋</div>`;
+  if(atBottom)th.scrollTop=th.scrollHeight;
+}
+function openFamilyBoard(){
+  stopBoardPoll();
+  if(!state.familyCode){ boardSetup(); return; }
+  $("#sheetPad").innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:22px;font-weight:900">${esc(state.familyName||"Family")} Board 💬</h2>
+      <button class="btn alt" id="fbInfo" style="width:auto;padding:6px 12px;font-size:15px" title="Code &amp; info">ⓘ</button>
+    </div>
+    <div class="safe-note" style="margin-top:8px">🛡️ <div>One group chat for the whole family — <b>everyone sees every message</b>. No private messages, so nobody can DM you or your kids.</div></div>
+    <div id="fbThread" style="margin:14px 0;height:46vh;overflow-y:auto;padding:2px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="fbText" maxlength="500" placeholder="Message ${esc(state.familyName||'the family')}…" style="flex:1;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font:inherit;color:var(--ink)">
+      <button class="btn" id="fbSend" style="width:auto;padding:12px 17px">Send</button>
+    </div>`;
+  $("#fbInfo").onclick=boardInfo;
+  $("#fbSend").onclick=boardSend;
+  $("#fbText").onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault();boardSend();} };
+  boardRenderThread(boardCache,true);
+  boardFetch().then(m=>{ if(m)boardRenderThread(m,true); else if(!boardCache.length){const th=$("#fbThread");if(th)th.innerHTML=`<div class="empty" style="padding:26px"><div class="big">📡</div>Can't reach the board — you're offline.<br>It'll be here when you're back on signal.</div>`;} });
+  boardPoll=setInterval(()=>{ if(!$("#fbThread")){stopBoardPoll();return;} boardFetch().then(m=>{ if(m)boardRenderThread(m,false); }); },6000);
+  openSheet();
+}
+async function boardSend(){
+  const inp=$("#fbText"); if(!inp)return;
+  const text=(inp.value||"").trim(); if(!text)return;
+  if(!state.familyCode){toast("No family board yet");return;}
+  inp.value="";
+  const optimistic={id:"tmp"+Date.now(),fromName:state.name||"Me",grown:!!state.isGrownUp,text,ts:new Date().toISOString()};
+  boardCache=boardCache.concat(optimistic);
+  boardRenderThread(boardCache,true);
+  try{
+    const r=await fetch(`${SYNC_URL}/board/${state.familyCode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fromName:state.name||"Someone",grown:!!state.isGrownUp,text})});
+    if(!r.ok)throw 0;
+    await boardFetch(); boardRenderThread(boardCache,true);
+  }catch(e){ toast("Couldn't send — check your signal 📡"); }
+}
+function boardSetup(){
+  const grown=state.isGrownUp;
+  const ist='width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:13px;font:inherit;color:var(--ink)';
+  const labst='font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900';
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:22px;font-weight:900">Family Board 💬</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 4px">One safe group chat for <b>${esc(state.familyName||"your family")}</b> — instead of WhatsApp. Everyone sees every message; <b>no private DMs, ever</b>.</p>
+    <div class="safe-note">🛡️ <div>Only people with your <b>family code</b> can see it — share it with real family only. A grown-up sets it up.</div></div>
+    ${grown?`<button class="btn" id="fbStart" style="margin-top:14px">✨ Start our family board</button>
+    <div class="lab" style="${labst};margin:18px 0 6px">Already have a family code?</div>`:`<div class="lab" style="${labst};margin:18px 0 6px">Enter your family code <span style="text-transform:none;letter-spacing:0;font-weight:600">— ask a grown-up</span></div>`}
+    <div style="display:flex;gap:8px"><input id="fbCode" placeholder="mellow-otter-42" style="${ist};flex:1"><button class="btn alt" id="fbJoin" style="width:auto;padding:12px 16px">Join</button></div>`;
+  if(grown){ const s=$("#fbStart"); if(s)s.onclick=async()=>{
+    toast("Making your board…");
+    try{ const r=await fetch(`${SYNC_URL}/profile`,{method:"POST"}); const d=await r.json(); if(!r.ok||!d.code)throw 0;
+      state.familyCode=d.code; save(); toast("Board ready 💬"); openFamilyBoard();
+    }catch(e){ toast("Couldn't reach the cloud — try when you have signal 📡"); }
+  }; }
+  $("#fbJoin").onclick=()=>{
+    const c=($("#fbCode").value||"").trim().toLowerCase();
+    if(!/^[a-z]+-[a-z]+-\d{2}$/.test(c)){toast("That code looks off 🙂");return;}
+    state.familyCode=c; save(); boardCache=[]; openFamilyBoard();
+  };
+  openSheet();
+}
+function boardInfo(){
+  stopBoardPoll();
+  const c=state.familyCode||"";
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:22px;font-weight:900">Your family code 💬</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 10px">Share this with <b>real family only</b> so they can join the board. It's the only key — and there are no private messages, by design.</p>
+    <div style="display:flex;gap:8px;align-items:center"><code style="flex:1;background:#0e0a08;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:16px;letter-spacing:.04em">${esc(c)}</code><button class="btn alt" id="fbCopy" style="width:auto;padding:11px 14px">Copy</button></div>
+    <button class="btn" id="fbShare" style="margin-top:10px">Share the code &amp; link</button>
+    <div class="safe-note" style="margin-top:12px">🛡️ <div>Everyone with this code sees the group thread. Nobody can message a person privately — the app has no DMs at all.</div></div>
+    <div class="btnrow" style="margin-top:14px"><button class="btn alt" id="fbLeave">Leave board</button><button class="btn" id="fbBack">← Messages</button></div>`;
+  $("#fbCopy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(c);toast("Code copied 📋");};
+  $("#fbShare").onclick=()=>{ const data={title:"FUTURE OUTFIT",text:`Join our family board on FUTURE OUTFIT — code: ${c}`,url:location.href}; if(navigator.share)navigator.share(data).catch(()=>{}); else {navigator.clipboard&&navigator.clipboard.writeText(`${data.text} — ${data.url}`);toast("Copied to share 📋");} };
+  $("#fbBack").onclick=openFamilyBoard;
+  $("#fbLeave").onclick=()=>{ state.familyCode=""; save(); boardCache=[]; stopBoardPoll(); toast("Left the board"); closeSheet(); if($("#view-you").classList.contains("active"))renderYou(); };
   openSheet();
 }
 function famRow(p,kind){
@@ -2725,7 +2832,7 @@ function openTryOn(fit){
 
 /* ---------- sheet & nav ---------- */
 function openSheet(){$("#sheetBg").classList.add("open");requestAnimationFrame(()=>$("#sheet").classList.add("open"));}
-function closeSheet(){$("#sheet").classList.remove("open");$("#sheetBg").classList.remove("open");}
+function closeSheet(){$("#sheet").classList.remove("open");$("#sheetBg").classList.remove("open");if(typeof stopBoardPoll==="function")stopBoardPoll();}
 $("#sheetBg").onclick=closeSheet;
 $("#meChip").onclick=()=>openProfile();
 

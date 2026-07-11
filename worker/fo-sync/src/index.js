@@ -121,6 +121,38 @@ export default {
         return json({ ok: true, id: msg.id });
       }
 
+      // ---- family group board (GROUP-ONLY — no private / 1:1 messaging) ----
+      // A "family code" (same friendly-code format) is a shared GROUP key that
+      // everyone in the family posts to and reads. There is deliberately NO way to
+      // message an individual person: the only surface is the whole-family thread,
+      // keyed by the group code — never by a kid's personal code. So no child can be
+      // DM'd or singled out. The group code (shared only within the approved family)
+      // is the gate.
+      if (path.startsWith("/board/")) {
+        const gc = decodeURIComponent(path.slice("/board/".length)).trim().toLowerCase();
+        if (!isCode(gc)) return json({ ok: false, error: "Bad code" }, 400);
+        if (request.method === "GET") {
+          const thread = (await env.FO_KV.get(`board:${gc}`, "json")) || [];
+          return json({ ok: true, messages: thread });
+        }
+        if (request.method === "POST") {
+          const body = await request.json().catch(() => null);
+          const text = String(body?.text || "").trim().slice(0, 500);
+          if (!text) return json({ ok: false, error: "Empty message" }, 400);
+          const msg = {
+            id: crypto.randomUUID().slice(0, 12),
+            fromName: String(body?.fromName || "Someone").slice(0, 40),
+            grown: !!body?.grown,
+            text,
+            ts: new Date().toISOString(),
+          };
+          const thread = (await env.FO_KV.get(`board:${gc}`, "json")) || [];
+          thread.push(msg);
+          await env.FO_KV.put(`board:${gc}`, JSON.stringify(thread.slice(-200)));
+          return json({ ok: true, id: msg.id, message: msg });
+        }
+      }
+
       // /inbox/:code — GET to read, POST {remove:[ids]} to ack/delete
       if (path.startsWith("/inbox/")) {
         const code = decodeURIComponent(path.slice("/inbox/".length)).trim().toLowerCase();
