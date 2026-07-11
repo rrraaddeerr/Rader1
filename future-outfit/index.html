@@ -1848,11 +1848,31 @@ async function boardFetch(){
 }
 function boardTime(ts){ try{const d=new Date(ts),s=(Date.now()-d.getTime())/1000; if(s<60)return"now"; if(s<3600)return Math.floor(s/60)+"m"; if(s<86400)return Math.floor(s/3600)+"h"; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(e){return"";} }
 function boardBubble(m){
-  const mine=(m.fromName||"")===(state.name||" ");
+  const mine=(m.fromName||"")===(state.name||"");
+  let card="";
+  if(m.card){ const o=cardFromCode(m.card); if(o){ ensureMirrorCSS(); card=`<div class="cardstage" style="width:118px;height:150px;margin:6px 0 4px;border-radius:12px;position:relative;overflow:hidden;border:1px solid var(--line)">${cardInnerHTML(o,false)}</div><button class="btn alt" data-remix="${esc(m.card)}" style="width:auto;padding:6px 12px;font-size:12px">🎴 Open &amp; remix</button>`; } }
   return `<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'};margin-bottom:10px">
     <div style="font-size:11px;color:var(--ink-dim);margin:0 5px 3px">${m.grown?"🧑":"🛹"} ${esc(m.fromName||'Someone')} · ${boardTime(m.ts)}</div>
-    <div style="max-width:82%;padding:9px 13px;border-radius:15px;font-size:14px;line-height:1.4;background:${mine?'var(--grad-cool)':'var(--panel-2)'};color:${mine?'#0a0a0a':'var(--ink)'};${mine?'border-bottom-right-radius:5px':'border-bottom-left-radius:5px'};word-break:break-word">${esc(m.text)}</div>
+    ${m.text?`<div style="max-width:82%;padding:9px 13px;border-radius:15px;font-size:14px;line-height:1.4;background:${mine?'var(--grad-cool)':'var(--panel-2)'};color:${mine?'#0a0a0a':'var(--ink)'};${mine?'border-bottom-right-radius:5px':'border-bottom-left-radius:5px'};word-break:break-word">${esc(m.text)}</div>`:""}
+    ${card}
   </div>`;
+}
+function boardRemix(code){
+  const o=cardFromCode(code); if(!o){toast("Couldn't open that card 🙂");return;}
+  stopBoardPoll(); ensureMirrorCSS();
+  cardCur={id:"c"+Date.now(),bg:o.bg||{type:"skin",v:state.skin},els:o.els||[],frame:!!o.frame};
+  cardSel=-1;cardTab="stamps";cardDrag=null;
+  drawCardMaker(); toast("Remix it & save 🎴");
+}
+async function shareCardToBoard(card){
+  if(!state.familyCode){ toast("Set up your Family Board first 💬"); closeSheet(); openFamilyBoard(); return; }
+  const code=cardToCode(card); if(!code){toast("Couldn't share that one 🙂");return;}
+  toast("Sharing to the family…");
+  try{
+    const r=await fetch(`${SYNC_URL}/board/${state.familyCode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fromName:state.name||"Someone",grown:!!state.isGrownUp,text:"made a Fit Card ✨",card:code})});
+    if(!r.ok)throw 0;
+    toast("Shared to the family board 🎴💛"); closeSheet(); boardCache=[]; openFamilyBoard();
+  }catch(e){ toast("Couldn't share — check your signal 📡"); }
 }
 function boardRenderThread(msgs,forceBottom){
   const th=$("#fbThread"); if(!th)return;
@@ -1877,6 +1897,7 @@ function openFamilyBoard(){
   $("#fbInfo").onclick=boardInfo;
   $("#fbSend").onclick=boardSend;
   $("#fbText").onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault();boardSend();} };
+  $("#fbThread").onclick=e=>{ const b=e.target.closest("[data-remix]"); if(b)boardRemix(b.dataset.remix); };
   boardRenderThread(boardCache,true);
   boardFetch().then(m=>{ if(m)boardRenderThread(m,true); else if(!boardCache.length){const th=$("#fbThread");if(th)th.innerHTML=`<div class="empty" style="padding:26px"><div class="big">📡</div>Can't reach the board — you're offline.<br>It'll be here when you're back on signal.</div>`;} });
   boardPoll=setInterval(()=>{ if(!$("#fbThread")){stopBoardPoll();return;} boardFetch().then(m=>{ if(m)boardRenderThread(m,false); }); },6000);
@@ -3205,7 +3226,10 @@ function saveCard(){
 }
 
 /* share & remix by code (photos stripped to keep codes small) */
-function cardToCode(card){const c={bg:(card.bg&&card.bg.type==="photo")?{type:"skin",v:state.skin}:(card.bg||{type:"skin",v:state.skin}),els:card.els||[]};try{return btoa(unescape(encodeURIComponent(JSON.stringify(c))));}catch(e){return"";}}
+/* Shareable code drops the selfie background AND any personal photo cut-outs
+   (data: URLs) — so a kid never broadcasts their face/closet photos, and the code
+   stays small. Keeps the design: vector pieces, thrift-find cut-outs, text, frame. */
+function cardToCode(card){const els=(card.els||[]).filter(e=>!(e.k==="photo"&&/^data:/.test(e.v||"")));const c={bg:(card.bg&&card.bg.type==="photo")?{type:"skin",v:state.skin}:(card.bg||{type:"skin",v:state.skin}),els,frame:!!card.frame};try{return btoa(unescape(encodeURIComponent(JSON.stringify(c))));}catch(e){return"";}}
 function cardFromCode(code){try{const o=JSON.parse(decodeURIComponent(escape(atob((code||"").trim()))));if(!o||!Array.isArray(o.els))return null;return o;}catch(e){return null;}}
 
 function cardsSectionHTML(){
@@ -3229,10 +3253,12 @@ function openCardActions(id){
   const card=(state.cards||[]).find(c=>c.id===id); if(!card)return;
   $("#sheetPad").innerHTML=`<div class="cardstage" style="max-width:220px;margin:0 auto 12px">${cardInnerHTML(card,false)}</div>
     <button class="btn" id="caEdit">✏️ Edit</button>
-    <button class="btn cool" id="caShare" style="margin-top:10px">📤 Share code (to remix)</button>
+    <button class="btn cool" id="caBoard" style="margin-top:10px">📣 Show the family 🎴</button>
+    <button class="btn alt" id="caShare" style="margin-top:10px">📤 Share code (to remix)</button>
     <button class="btn alt" id="caDel" style="margin-top:10px">🗑️ Delete</button>`;
   openSheet();
   $("#caEdit").onclick=()=>openCardMaker(id);
+  $("#caBoard").onclick=()=>shareCardToBoard(card);
   $("#caShare").onclick=()=>{const code=cardToCode(card);if(code&&navigator.clipboard)navigator.clipboard.writeText(code);toast("Card code copied 📤 — send it to a pal");};
   $("#caDel").onclick=()=>{state.cards=(state.cards||[]).filter(c=>c.id!==id);save();closeSheet();go("board");toast("Deleted");};
 }

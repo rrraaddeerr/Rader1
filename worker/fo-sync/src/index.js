@@ -138,7 +138,10 @@ export default {
         if (request.method === "POST") {
           const body = await request.json().catch(() => null);
           const text = String(body?.text || "").trim().slice(0, 500);
-          if (!text) return json({ ok: false, error: "Empty message" }, 400);
+          // optional shared Fit Card (a base64 remix code) — lets a kid "flex" a
+          // creation to the whole family, remixable in one tap. Still group-only.
+          const card = typeof body?.card === "string" && body.card.length <= 8000 ? body.card : "";
+          if (!text && !card) return json({ ok: false, error: "Empty message" }, 400);
           const msg = {
             id: crypto.randomUUID().slice(0, 12),
             fromName: String(body?.fromName || "Someone").slice(0, 40),
@@ -146,6 +149,7 @@ export default {
             text,
             ts: new Date().toISOString(),
           };
+          if (card) msg.card = card;
           const thread = (await env.FO_KV.get(`board:${gc}`, "json")) || [];
           thread.push(msg);
           await env.FO_KV.put(`board:${gc}`, JSON.stringify(thread.slice(-200)));

@@ -114,6 +114,18 @@ const run = async () => {
   // bad group code -> 400
   r = await call("/board/not!valid"); eq("board bad code 400", r.status, 400);
 
+  // sharing a Fit Card (base64 remix code) to the group
+  r = await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromName: "Andre", grown: false, text: "made a fit ✨", card: "eyJlbHMiOltdfQ==" }) });
+  eq("board card post ok", r.status, 200);
+  r = await call("/board/" + fam); d = await r.json();
+  const shared = d.messages.find(m => m.card);
+  ok("board carries shared card", !!shared && shared.card === "eyJlbHMiOltdfQ==");
+  // card-only (no text) still allowed
+  r = await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromName: "X", card: "eyJlbHMiOltdfQ==" }) });
+  eq("board card-only ok", r.status, 200);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 };
