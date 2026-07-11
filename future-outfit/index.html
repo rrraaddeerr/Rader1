@@ -1746,12 +1746,16 @@ function renderFamilyBox(){
     + `<button class="teaser" id="goBoard" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
     <span class="ti">💬</span>
     <div><b>${state.familyName?esc(state.familyName)+" Board":"Family Board"}</b><div style="color:var(--ink-soft);font-size:13px">One group chat for the whole family — everyone sees it, no private DMs. ${state.familyCode?`<b style="color:var(--ink)">Open →</b>`:`<b style="color:var(--ink)">Set it up →</b>`}</div></div></button>`
-    + (state.isGrownUp?`<button class="teaser" id="goCamp" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    + (state.isGrownUp?`<button class="teaser" id="goInvite" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    <span class="ti">📷</span>
+    <div><b>Invite the family</b><div style="color:var(--ink-soft);font-size:13px">A scan-to-join QR + link for a big family day — get everyone on fast. <b style="color:var(--ink)">Show →</b></div></div></button>
+    <button class="teaser" id="goCamp" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
     <span class="ti">📋</span>
     <div><b>Family sign-up &amp; feedback</b><div style="color:var(--ink-soft);font-size:13px">Pass your phone around — everyone adds themselves &amp; answers a few quick Qs. Works with no signal.${nr?` <b style="color:var(--ink)">${nr} so far →</b>`:` <b style="color:var(--ink)">Start →</b>`}</div></div></button>`:"");
   $("#goFamily").onclick=openFamily;
   {const gc=$("#goCamp");if(gc)gc.onclick=openCampSignup;}
   {const bd=$("#goBoard");if(bd)bd.onclick=openFamilyBoard;}
+  {const gi=$("#goInvite");if(gi)gi.onclick=openInvite;}
 }
 
 /* ---------- Family sign-up & feedback: pass-the-phone questionnaire ----------
@@ -1874,6 +1878,36 @@ async function shareCardToBoard(card){
     toast("Shared to the family board 🎴💛"); closeSheet(); boardCache=[]; openFamilyBoard();
   }catch(e){ toast("Couldn't share — check your signal 📡"); }
 }
+
+/* ---------- invite the family: a scan-to-join screen for a big family day ----------
+   Pre-baked QR opens the app (works offline). If a Family Board exists, the shared
+   link carries a one-tap join code (#join=<code>) so scanning/tapping auto-joins. */
+let pendingJoin=null;
+function openInvite(){
+  const has=state.familyCode;
+  const link=location.origin+location.pathname+(has?("#join="+has):"");
+  const shareTxt=`Join ${state.familyName||"our family"} on FUTURE OUTFIT!${has?` Family code: ${has}`:""}`;
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:23px;font-weight:900;text-align:center">Join ${esc(state.familyName||"the family")} 👋</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 14px;text-align:center">Point a phone camera at this — it opens the app. Then add yourself, 20 secs.</p>
+    <div style="background:#fff;border-radius:18px;padding:16px;width:240px;margin:0 auto;box-shadow:0 8px 28px rgba(0,0,0,.45)"><img src="${FO_QR}" alt="Scan to open Future Outfit" style="width:100%;display:block"></div>
+    <p style="text-align:center;margin:14px 0 2px;font-size:13px;color:var(--ink-soft)">or open</p>
+    <p style="text-align:center;margin:0 0 14px;font-weight:800;color:var(--accent);font-size:15px">rrraaddeerr.github.io/futureoutfit</p>
+    ${has?`<div class="safe-note">💬 <div>Family Board code: <b style="color:var(--ink)">${esc(has)}</b> — share the invite below and it joins them in one tap, or they type it in.</div></div>`:`<div class="know" style="margin-bottom:6px">💡 Set up your Family Board (💬) first — then this invite carries a one-tap join code.</div>`}
+    <button class="btn" id="invShare" style="margin-top:14px">📤 Share the invite${has?" (auto-joins)":""}</button>`;
+  $("#invShare").onclick=()=>{ const data={title:"FUTURE OUTFIT",text:shareTxt,url:link}; if(navigator.share)navigator.share(data).catch(()=>{}); else {navigator.clipboard&&navigator.clipboard.writeText(shareTxt+" "+link);toast("Invite copied — paste it anywhere 📋");} };
+  openSheet();
+}
+/* deep link: opening the app with #join=<family-code> auto-joins that board */
+function handleJoinHash(){
+  const m=(location.hash||"").match(/^#\/?join=([a-z]+-[a-z]+-\d{2})$/i);
+  if(!m)return false;
+  const code=m[1].toLowerCase();
+  try{history.replaceState(null,"","#you");}catch(e){}
+  if(!localStorage.getItem("fo_welcomed")){ pendingJoin=code; }
+  else { state.familyCode=code; save(); setTimeout(()=>toast("Joined the family board 💬"),400); }
+  return true;
+}
 function boardRenderThread(msgs,forceBottom){
   const th=$("#fbThread"); if(!th)return;
   const atBottom=forceBottom||(th.scrollTop+th.clientHeight>=th.scrollHeight-40);
@@ -1948,11 +1982,13 @@ function boardInfo(){
     <h2 style="margin:0;font-size:22px;font-weight:900">Your family code 💬</h2>
     <p style="color:var(--ink-soft);margin:6px 0 10px">Share this with <b>real family only</b> so they can join the board. It's the only key — and there are no private messages, by design.</p>
     <div style="display:flex;gap:8px;align-items:center"><code style="flex:1;background:#0e0a08;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:16px;letter-spacing:.04em">${esc(c)}</code><button class="btn alt" id="fbCopy" style="width:auto;padding:11px 14px">Copy</button></div>
-    <button class="btn" id="fbShare" style="margin-top:10px">Share the code &amp; link</button>
+    <button class="btn cool" id="fbInvite" style="margin-top:10px">📷 Show invite QR — scan to join</button>
+    <button class="btn" id="fbShare" style="margin-top:10px">📤 Share the join link</button>
     <div class="safe-note" style="margin-top:12px">🛡️ <div>Everyone with this code sees the group thread. Nobody can message a person privately — the app has no DMs at all.</div></div>
     <div class="btnrow" style="margin-top:14px"><button class="btn alt" id="fbLeave">Leave board</button><button class="btn" id="fbBack">← Messages</button></div>`;
   $("#fbCopy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(c);toast("Code copied 📋");};
-  $("#fbShare").onclick=()=>{ const data={title:"FUTURE OUTFIT",text:`Join our family board on FUTURE OUTFIT — code: ${c}`,url:location.href}; if(navigator.share)navigator.share(data).catch(()=>{}); else {navigator.clipboard&&navigator.clipboard.writeText(`${data.text} — ${data.url}`);toast("Copied to share 📋");} };
+  $("#fbInvite").onclick=openInvite;
+  $("#fbShare").onclick=()=>{ const link=location.origin+location.pathname+"#join="+c; const data={title:"FUTURE OUTFIT",text:`Join ${state.familyName||"our family"} on FUTURE OUTFIT — one tap to join our board`,url:link}; if(navigator.share)navigator.share(data).catch(()=>{}); else {navigator.clipboard&&navigator.clipboard.writeText(`${data.text} — ${link}`);toast("Join link copied 📋");} };
   $("#fbBack").onclick=openFamilyBoard;
   $("#fbLeave").onclick=()=>{ state.familyCode=""; save(); boardCache=[]; stopBoardPoll(); toast("Left the board"); closeSheet(); if($("#view-you").classList.contains("active"))renderYou(); };
   openSheet();
@@ -2875,6 +2911,7 @@ function showTab(v){
 const TABS=["discover","board","closet","fits","quests","you","learn"];
 // Hash router: #<tab> for tabs, #look/<id> for a look's own page.
 function route(){
+  if(handleJoinHash()){ /* #join=<code> handled; hash now points at #you */ }
   const h=(location.hash||"").replace(/^#\/?/,"");
   if(h.indexOf("look/")===0){ renderLookPage(decodeURIComponent(h.slice(5))); return; }
   showTab(TABS.includes(h)?h:"discover");
@@ -2887,6 +2924,8 @@ $("#goCloset").onclick=()=>go("closet");
 
 /* ---------- cloud save (accounts via a friendly code) ---------- */
 const SYNC_URL="https://fo-sync.raderturner.workers.dev";
+/* pre-baked QR of the app URL (works offline) — for the "invite the family" screen */
+const FO_QR="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAXIAAAFyCAIAAABnRsZeAAAHp0lEQVR4nO3cMW7zuAJG0WTwlyre/lc5hXvNDoTB4+WQlM/p4yi2c8HiA3/v+/4B6PwVvhaArAA9WQFisgLEZAWIyQoQkxUgJitATFaAmKwAMVkBYrICxGQFiMkKEJMVICYrQExWgJisADFZAWJ/Rn74uv738y6fz98bvhsjT7XKqu/G83v1/FR7fvqrjLwbTitATFaAmKwAMVkBYrICxGQFiMkKEJMVICYrwE4r2xO3oXuuP5/tuQ0d+b0jW9gTv5OfL/tfcFoBYrICxGQFiMkKEJMVICYrQExWgJisADFZAc5Z2T47cUk575lX7WjnrV1X7Wjn/b0nfq8+i9a9TitATFaAmKwAMVkBYrICxGQFiMkKEJMVICYrwFtWtu8z727XE59qz90w/w2nFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUgZmWbOfHm13nm7WhHfvb5qSx0K04rQExWgJisADFZAWKyAsRkBYjJChCTFSAmK8BbVrbftmgc2dHO2+DO+xT23Bzv+V59Xve/4LQCxGQFiMkKEJMVICYrQExWgJisADFZAWKyApyzsj3xBtYTd7SrNqkj29D3vVfPri/7X3BaAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQF2Wtm+7w7OVd63wtxz+7tqN/xtnFaAmKwAMVkBYrICxGQFiMkKEJMVICYrQExWgNjvfd//9w/veW/oiFVbyVXv5Mjfu+fadd73yvf533NaAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQF2usv22aol5ftuFd1zRzvPyOe7at174r2/z0beDacVICYrQExWgJisADFZAWKyAsRkBYjJChCTFWCnle2qdeCqu11XbTRHnurb7lg9cdt9bfltH+G0AsRkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLstLKdt+B839r1xHtS91z3jtxl+2zPT/Dackf7zGkFiMkKEJMVICYrQExWgJisADFZAWKyAsRkBdhpZftszxtnR5y43131s8/m3XP87H0b3M+Wy2+nFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUg9nvf989p9lx/nriGXPVOvu+VT/xOPht5ZqcVICYrQExWgJisADFZAWKyAsRkBYjJChCTFWCnle2Jt8bu+cx7rntHXnnE+z6jz4HfjRFOK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUgJitA7M/PNCP7znk3g85bnY4887y944hV98LOuzV21Z3Bq6z6i5xWgJisADFZAWKyAsRkBYjJChCTFSAmK0BMVoBzVrZ7LjhPvBn0xBtn5/3eVTvpZyd+665pn6DTChCTFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQ+73v+2eOecvC961d97yfddWaec/3atVS9jrw/8hpBYjJChCTFSAmK0BMVoCYrAAxWQFisgLEZAWIvfAu23n7zj13pe+7j3aePT/Ba8s18winFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxVgp7ts91wH7nm367xX3vOp5r3ynne7rnqqEVa2wDFkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLstLL9tuXoqntD93wnn+35CY688rM9f++16NN3WgFisgLEZAWIyQoQkxUgJitATFaAmKwAMVkBzrnL9tmee9Z5TlxwjjjxmU/cs15bLrCdVoCYrAAxWQFisgLEZAWIyQoQkxUgJitATFaAc1a2J95XuucNuyNWbY5PXGCfuJR95i5b4CVkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLE/vws8r5l4bMTF7p7rk7n2fNbdx34+TqtADFZAWKyAsRkBYjJChCTFSAmK0BMVoCYrABvWdnueV/pvFeet0ld9crzbgWe91R77lmfnbhmdloBYrICxGQFiMkKEJMVICYrQExWgJisADFZAXZa2b5vOfps1a702arbefe0at074tpyGTzCaQWIyQoQkxUgJitATFaAmKwAMVkBYrICxGQF2Gllu+fCb8TzknLPu13n/d49t857fidXvZMj5j2V0woQkxUgJitATFaAmKwAMVkBYrICxGQFiMkKsNPK9tmey8I97w1dtYXdc+067y868Ubha9o7Oe975bQCxGQFiMkKEJMVICYrQExWgJisADFZAWKyApyzsn124t5x5Pfuedfpqi3siWvmPW9u/mz5rXNaAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQHesrJ9nz13w6t2tCP7zj1v9p33e69p9yu7yxZ4CVkBYrICxGQFiMkKEJMVICYrQExWgJisADEr28yed7vOu711ZCl74up05Pc+m/dUI793hNMKEJMVICYrQExWgJisADFZAWKyAsRkBYjJCvCWle28hd88q5ajqzaaqz6jVVvYVXf3XtO+G6s4rQAxWQFisgLEZAWIyQoQkxUgJitATFaAmKwA56xs37cdfN9S1mK1+tmRp/osugXZXbbAMWQFiMkKEJMVICYrQExWgJisADFZAWKyAsR+7/uuXxP4ak4rQExWgJisADFZAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUgJitATFaAmKwAP61/AD87P5zIFGCXAAAAAElFTkSuQmCC";
 const PKEY="fo_profile";
 const myCode=()=>localStorage.getItem(PKEY)||"";
 let pushT=null, syncing=false;
@@ -3375,6 +3414,7 @@ function commitSetup(){ // persist identity as soon as it's known
 function finishSetup(){
   commitSetup();
   localStorage.setItem("fo_welcomed","1");
+  if(pendingJoin){ state.familyCode=pendingJoin; pendingJoin=null; save(); }  // auto-join from an invite link
   closeSheet(); updateMe();
   if($("#view-you").classList.contains("active"))renderYou();
   toast(`Welcome, ${state.name}! 💛`);
