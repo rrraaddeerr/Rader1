@@ -1192,7 +1192,7 @@ const CREW_NOTE={
 };
 
 /* ---------- state ---------- */
-function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
+function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",campResponses:[],myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
 function save(){state.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(state));cloudPushSoon();}
 let state=load();
 
@@ -1739,10 +1739,95 @@ function pickHue(i){return FAM_HUES[((i||0)%FAM_HUES.length+FAM_HUES.length)%FAM
 function renderFamilyBox(){
   const box=$("#familyBox"); if(!box)return;
   const n=getAdults().length+getCrew().length+allFriends().length;
+  const nr=(state.campResponses||[]).length;
   box.innerHTML=`<button class="teaser" id="goFamily" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
     <span class="ti">👪</span>
-    <div><b>My family &amp; pals</b><div style="color:var(--ink-soft);font-size:13px">${n} ${n===1?"person":"people"} you can ask, phone or get fits from — add, rename or remove anyone. <b style="color:var(--ink)">Open →</b></div></div></button>`;
+    <div><b>My family &amp; pals</b><div style="color:var(--ink-soft);font-size:13px">${n} ${n===1?"person":"people"} you can ask, phone or get fits from — add, rename or remove anyone. <b style="color:var(--ink)">Open →</b></div></div></button>`
+    + (state.isGrownUp?`<button class="teaser" id="goCamp" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    <span class="ti">📋</span>
+    <div><b>Family sign-up &amp; feedback</b><div style="color:var(--ink-soft);font-size:13px">Pass your phone around — everyone adds themselves &amp; answers a few quick Qs. Works with no signal.${nr?` <b style="color:var(--ink)">${nr} so far →</b>`:` <b style="color:var(--ink)">Start →</b>`}</div></div></button>`:"");
   $("#goFamily").onclick=openFamily;
+  {const gc=$("#goCamp");if(gc)gc.onclick=openCampSignup;}
+}
+
+/* ---------- Family sign-up & feedback: pass-the-phone questionnaire ----------
+   Great for a big family day. Each person adds themselves + answers a few quick
+   questions. Everything saves ON THIS PHONE (works with zero signal at camp) and
+   syncs to the cloud later. Kid-safe: first names + style only, never emails/phones. */
+const CAMP_VIBES=[["street","🧢 Street"],["avant","🖤 Avant"],["future","🛰️ Techy"],["maker","🧵 Maker"],["mix","✨ A mix"]];
+const CAMP_Q=[
+  {k:"react",q:"First reaction to Future Outfit?",opts:[["love","😍 Love it"],["like","🙂 Like it"],["meh","😐 It's okay"],["nah","🤷 Not for me"]]},
+  {k:"use",q:"Would you actually use it?",opts:[["yes","✅ Yes"],["maybe","🤔 Maybe"],["no","🚫 No"]]},
+  {k:"whats",q:"Use it to keep the family in touch — instead of WhatsApp?",opts:[["yes","✅ Yes"],["maybe","🤔 Maybe"],["no","🚫 Nah"]]},
+];
+let campPick;
+function openCampSignup(){
+  campPick={who:"kid",vibe:"mix",react:null,use:null,whats:null};
+  const lab='font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900';
+  const ist='width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:13px;font:inherit;color:var(--ink)';
+  const chips=(id,arr,sel)=>`<div class="filters" id="${id}">${arr.map(o=>`<button class="chip" data-v="${o[0]}" aria-pressed="${o[0]===sel}">${o[1]}</button>`).join("")}</div>`;
+  const n=(state.campResponses||[]).length;
+  $("#sheetPad").innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:22px;font-weight:900">Sign-up 📋</h2>
+      ${n?`<button class="btn alt" id="campSee" style="width:auto;padding:8px 12px;font-size:13px">📊 ${n}</button>`:""}
+    </div>
+    <p style="color:var(--ink-soft);margin:6px 0 4px">Pass the phone to the next person — 30 seconds. <b>${esc(state.familyName||"The family")}</b> 💛</p>
+    <div class="safe-note">🛡️ <div>Just a first name &amp; opinions — <b>no emails or phone numbers</b>. Saved on this phone; works with no signal.</div></div>
+    <div class="lab" style="${lab};margin:14px 0 6px">Your name</div>
+    <input id="cName" maxlength="24" placeholder="e.g. Andre" style="${ist}">
+    <div class="lab" style="${lab};margin:14px 0 6px">You're a…</div>
+    ${chips("cWho",[["grown","🧑 Grown-up"],["kid","🛹 Kid"]],"kid")}
+    <div class="lab" style="${lab};margin:14px 0 6px">Your style vibe</div>
+    ${chips("cVibe",CAMP_VIBES,"mix")}
+    ${CAMP_Q.map(q=>`<div class="lab" style="${lab};margin:16px 0 6px">${esc(q.q)}</div>${chips("cq_"+q.k,q.opts,"")}`).join("")}
+    <div class="lab" style="${lab};margin:16px 0 6px">One thing that would make you use it?</div>
+    <textarea id="cWish" placeholder="…anything" style="width:100%;min-height:70px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font:inherit;color:var(--ink)"></textarea>
+    <button class="btn" id="cSave" style="margin-top:16px">Save &amp; next person →</button>`;
+  const wire=(id,key)=>$$("#"+id+" .chip").forEach(b=>b.onclick=()=>{campPick[key]=b.dataset.v;$$("#"+id+" .chip").forEach(x=>x.setAttribute("aria-pressed",x===b));});
+  wire("cWho","who"); wire("cVibe","vibe"); CAMP_Q.forEach(q=>wire("cq_"+q.k,q.k));
+  {const cs=$("#campSee");if(cs)cs.onclick=openCampResults;}
+  $("#cSave").onclick=()=>{
+    const name=($("#cName").value||"").trim();
+    if(!name){toast("Pop your name in 🙂");return;}
+    const r={name:name.slice(0,24),who:campPick.who,vibe:campPick.vibe,react:campPick.react,use:campPick.use,whats:campPick.whats,wish:($("#cWish").value||"").trim().slice(0,200),when:Date.now()};
+    state.campResponses=state.campResponses||[]; state.campResponses.push(r);
+    const sp=(r.vibe&&r.vibe!=="mix")?r.vibe:"street";
+    if(r.who==="grown"){ state.adults=state.adults||[]; state.adults.push({id:"ua"+Date.now(),name:r.name,rel:"Family",hue:pickHue(state.adults.length)}); }
+    else { state.friends=state.friends||[]; state.friends.push({id:"uf"+Date.now(),name:r.name,rel:"Family",emoji:SPEC_EMOJI[sp]||"🙂",spec:sp,helps:0,hue:SPEC_HUE[sp]||"linear-gradient(135deg,#ff7ac3,#9b6bff)"}); }
+    save();refreshQuests();
+    toast(`Thanks ${r.name.split(" ")[0]}! Pass it on 💛`);
+    openCampSignup();
+  };
+  openSheet();
+}
+function openCampResults(){
+  const rs=state.campResponses||[];
+  const tally=(key,vals)=>vals.map(v=>({v,n:rs.filter(r=>r[key]===v).length}));
+  const bar=(rows,colors)=>rows.map((x,i)=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="width:58px;font-size:12px;color:var(--ink-soft);text-transform:capitalize">${x.v}</span><div style="flex:1;height:16px;background:var(--panel-2);border-radius:8px;overflow:hidden"><div style="height:100%;width:${rs.length?Math.round(x.n/rs.length*100):0}%;background:${colors[i]}"></div></div><span style="width:22px;text-align:right;font-weight:800;font-size:13px">${x.n}</span></div>`).join("");
+  const hl='font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-dim);font-weight:900';
+  const wishes=rs.filter(r=>r.wish).slice(-8).reverse();
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:22px;font-weight:900">Feedback so far 📊</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 12px"><b>${rs.length}</b> ${rs.length===1?"person":"people"} from ${esc(state.familyName||"the family")}.</p>
+    ${rs.length?`
+    <div class="lab" style="${hl};margin:6px 0 8px">First reaction</div>
+    ${bar(tally("react",["love","like","meh","nah"]),["#2ecf8f","#46d6ff","#ffb25f","#ff5e7e"])}
+    <div class="lab" style="${hl};margin:14px 0 8px">Would use it</div>
+    ${bar(tally("use",["yes","maybe","no"]),["#2ecf8f","#ffb25f","#ff5e7e"])}
+    <div class="lab" style="${hl};margin:14px 0 8px">Instead of WhatsApp?</div>
+    ${bar(tally("whats",["yes","maybe","no"]),["#2ecf8f","#ffb25f","#ff5e7e"])}
+    ${wishes.length?`<div class="lab" style="${hl};margin:16px 0 8px">Wishes</div>${wishes.map(r=>`<div class="know" style="margin-bottom:6px">💬 <b>${esc(r.name.split(" ")[0])}:</b> "${esc(r.wish)}"</div>`).join("")}`:""}
+    <div class="btnrow" style="margin-top:16px"><button class="btn alt" id="crCopy">📋 Copy all</button><button class="btn" id="crBack">Add another</button></div>
+    `:`<div class="empty"><div class="big">📋</div>No answers yet.<br>Pass the phone around to start.</div><button class="btn" id="crBack" style="margin-top:12px">Start sign-up</button>`}`;
+  {const cb=$("#crBack");if(cb)cb.onclick=openCampSignup;}
+  const cp=$("#crCopy");
+  if(cp)cp.onclick=()=>{
+    const txt=`FUTURE OUTFIT — ${state.familyName||"family"} feedback (${rs.length})\n\n`+rs.map(r=>`${r.name} (${r.who}) · react:${r.react||"-"} use:${r.use||"-"} whatsApp:${r.whats||"-"}${r.wish?` · "${r.wish}"`:""}`).join("\n");
+    if(navigator.clipboard)navigator.clipboard.writeText(txt);
+    toast("Copied — paste it anywhere 📋");
+  };
+  openSheet();
 }
 function famRow(p,kind){
   const ic=kind==="adult"?esc((p.name||"?")[0]):(p.emoji||"🙂");
