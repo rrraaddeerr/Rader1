@@ -36,20 +36,40 @@ function makeKV() {
   };
 }
 
-const env = { AUTH_TOKEN: "dev", REFS_KV: makeKV() };
+const env = {
+  AUTH_TOKEN: "dev",
+  REFS_KV: makeKV(),
+  // Twilio secrets present -> the "sms" reminder channel is live in config
+  TWILIO_ACCOUNT_SID: "AC_test",
+  TWILIO_AUTH_TOKEN: "tw_secret",
+  TWILIO_FROM: "+15550001111",
+  REMINDER_PHONE: "+15552223333",
+};
 const TOK = { "X-Auth-Token": "dev" };
 const req = (path, opts = {}) => new Request("http://localhost" + path, opts);
 const call = (path, opts) => worker.fetch(req(path, opts), env, {});
 
-// stub global fetch so OG scraping is deterministic + offline
-globalThis.fetch = async () =>
-  new Response(
+// stub global fetch: deterministic OG scraping + capture Twilio/web-push sends
+const twilioCalls = [];
+const pushCalls = [];
+globalThis.fetch = async (input, init) => {
+  const u = String(input);
+  if (u.includes("api.twilio.com")) {
+    twilioCalls.push({ url: u, body: String(init?.body ?? "") });
+    return new Response("{}", { status: 201 });
+  }
+  if (u.includes("push.example")) {
+    pushCalls.push(u);
+    return new Response("", { status: 201 });
+  }
+  return new Response(
     `<html><head><title>Repo</title>` +
       `<meta property="og:title" content="Cool Repo">` +
       `<meta property="og:description" content="A description">` +
       `<meta property="og:image" content="https://img.test/x.png"></head><body></body></html>`,
     { headers: { "content-type": "text/html" } }
   );
+};
 
 const run = async () => {
   // health
@@ -81,6 +101,7 @@ const run = async () => {
   });
   d = await r.json();
   eq("note category", d.ref.category, "note");
+  const noteId = d.ref.id;
 
   // save a raw image blob
   const bytes = new Uint8Array([1, 2, 3, 4, 5]);
@@ -144,13 +165,49 @@ const run = async () => {
   d = await r.json();
   eq("search finds new tag", d.refs.length, 1);
 
-  // delete
+  // PATCH: edit a note's text + title (the bigger typing area, server side)
+  r = await call("/api/ref/" + noteId, {
+    method: "PATCH",
+    headers: { ...TOK, "Content-Type": "application/json" },
+    body: JSON.stringify({ text: "ship the thing\nwith a second line", title: "Ship it" }),
+  });
+  d = await r.json();
+  eq("patch text 200", r.status, 200);
+  eq("patch text saved", d.ref.text, "ship the thing\nwith a second line");
+  eq("patch title saved", d.ref.title, "Ship it");
+
+  // ---- trash: delete is soft + restorable ----
   r = await call("/api/ref/" + imgId, { method: "DELETE", headers: TOK });
   eq("delete 200", r.status, 200);
-  ok("blob gone after delete", !env.REFS_KV._store.has("blob:" + blobKey));
+  ok("blob kept while in trash", env.REFS_KV._store.has("blob:" + blobKey));
   r = await call("/api/list", { headers: TOK });
   d = await r.json();
   eq("list returns 2 after delete", d.refs.length, 2);
+  r = await call("/api/trash", { headers: TOK });
+  d = await r.json();
+  eq("trash has 1", d.refs.length, 1);
+  ok("trash item has deletedAt", !!d.refs[0].deletedAt);
+
+  // restore brings it back
+  r = await call("/api/ref/" + imgId + "/restore", { method: "POST", headers: TOK });
+  d = await r.json();
+  eq("restore 200", r.status, 200);
+  ok("restored ref has no deletedAt", !d.ref.deletedAt);
+  r = await call("/api/list", { headers: TOK });
+  d = await r.json();
+  eq("list back to 3 after restore", d.refs.length, 3);
+  r = await call("/api/trash", { headers: TOK });
+  d = await r.json();
+  eq("trash empty after restore", d.refs.length, 0);
+
+  // delete forever removes the blob too
+  await call("/api/ref/" + imgId, { method: "DELETE", headers: TOK });
+  r = await call("/api/trash/" + imgId, { method: "DELETE", headers: TOK });
+  eq("delete forever 200", r.status, 200);
+  ok("blob gone after delete forever", !env.REFS_KV._store.has("blob:" + blobKey));
+  r = await call("/api/list", { headers: TOK });
+  d = await r.json();
+  eq("list returns 2 after delete forever", d.refs.length, 2);
 
   // export NDJSON
   r = await call("/api/export", { headers: TOK });
@@ -165,6 +222,85 @@ const run = async () => {
   });
   d = await r.json();
   eq("import 1", d.imported, 1);
+
+  // ---- reminders ----
+  r = await call("/api/reminders/config", { headers: TOK });
+  d = await r.json();
+  eq("reminder config 200", r.status, 200);
+  ok("config has vapid key", typeof d.push?.vapidKey === "string" && d.push.vapidKey.length > 20);
+  eq("config: sms on (twilio secrets set)", d.sms, true);
+  eq("config: whatsapp off (no sender set)", d.whatsapp, false);
+
+  r = await call("/api/reminders", {
+    method: "POST",
+    headers: { ...TOK, "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "no due" }),
+  });
+  eq("reminder without due -> 400", r.status, 400);
+  r = await call("/api/reminders", {
+    method: "POST",
+    headers: { ...TOK, "Content-Type": "application/json" },
+    body: JSON.stringify({ due: Date.now(), channels: [] }),
+  });
+  eq("reminder without channels -> 400", r.status, 400);
+
+  // register a push device, then schedule an already-due reminder on sms+push
+  r = await call("/api/push/subscribe", {
+    method: "POST",
+    headers: { ...TOK, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subKey: "testsubkey1234567890",
+      subscription: { endpoint: "https://push.example/send/abc" },
+    }),
+  });
+  eq("push subscribe 200", r.status, 200);
+
+  r = await call("/api/reminders", {
+    method: "POST",
+    headers: { ...TOK, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "Call the tailor",
+      due: Date.now() - 1000,
+      channels: ["sms", "push"],
+      url: "https://x.io",
+    }),
+  });
+  d = await r.json();
+  eq("reminder created 201", r.status, 201);
+  r = await call("/api/reminders", { headers: TOK });
+  d = await r.json();
+  eq("upcoming lists 1", d.reminders.length, 1);
+
+  // the minute cron fires it over both channels, then removes it
+  await worker.scheduled({}, env, { waitUntil: () => {} });
+  eq("twilio was called once", twilioCalls.length, 1);
+  ok("twilio body has the title", twilioCalls[0].body.includes("Call+the+tailor"));
+  eq("push endpoint was hit once", pushCalls.length, 1);
+  r = await call("/api/reminders", { headers: TOK });
+  d = await r.json();
+  eq("fired reminder is gone", d.reminders.length, 0);
+
+  // the SW pulls its pending notification using the subKey capability
+  r = await call("/api/push/pending?k=testsubkey1234567890");
+  d = await r.json();
+  eq("pending has 1 notification", d.notifications.length, 1);
+  ok("notification mentions the title", d.notifications[0].title.includes("Call the tailor"));
+  r = await call("/api/push/pending?k=testsubkey1234567890");
+  d = await r.json();
+  eq("pending drained after pull", d.notifications.length, 0);
+  r = await call("/api/push/pending?k=wrongkey12345678");
+  eq("wrong subKey -> 404", r.status, 404);
+
+  // downloadable .ics for Apple Reminders / Calendar
+  r = await call("/api/reminders/ics", {
+    method: "POST",
+    headers: { ...TOK, "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "Try on the fit", due: Date.now() + 3600000 }),
+  });
+  eq("ics 200", r.status, 200);
+  const icsText = await r.text();
+  ok("ics has an event + alarm", icsText.includes("BEGIN:VEVENT") && icsText.includes("BEGIN:VALARM"));
+  ok("ics has the title", icsText.includes("SUMMARY:🧠 Try on the fit"));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

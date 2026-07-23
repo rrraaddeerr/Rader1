@@ -1,10 +1,17 @@
 // The drop SPA. Served at GET /drop. Self-contained: no external assets.
+import { REMIND_CSS, REMIND_HTML, REMIND_JS } from "./remind.js";
+
 export const DROP_HTML = /* html */ `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Big Brain">
 <title>🧠 Big Brain</title>
 <style>
   :root{--bg:#0f1115;--panel:#161a22;--panel2:#1b2030;--line:#283042;--ink:#e7ecf5;--soft:#9aa6bd;--blue:#3b82f6;--blue2:#2563eb;--ok:#22c55e;--bad:#ef4444}
@@ -19,6 +26,7 @@ export const DROP_HTML = /* html */ `<!doctype html>
   label{font-weight:600;display:block;margin-bottom:8px}
   input[type=text],input[type=password],textarea{width:100%;background:#0b0e14;border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:12px 14px;font:inherit}
   textarea{min-height:70px;resize:vertical}
+  #noteta{min-height:160px;line-height:1.6}
   button{font:inherit;font-weight:700;border:0;border-radius:10px;padding:11px 18px;background:var(--blue);color:#fff;cursor:pointer}
   button:hover{background:var(--blue2)}
   button.ghost{background:#222a39;color:var(--ink)}
@@ -34,13 +42,14 @@ export const DROP_HTML = /* html */ `<!doctype html>
   .toast.show{opacity:1}
   .toast.ok{border-color:#1f6b3a}.toast.bad{border-color:#7a2727}
   .recent{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;margin-top:8px}
-  .tile{background:#0b0e14;border:1px solid var(--line);border-radius:10px;overflow:hidden;aspect-ratio:1;position:relative;display:flex;align-items:center;justify-content:center;text-align:center}
+  .tile{background:#0b0e14;border:1px solid var(--line);border-radius:10px;overflow:hidden;aspect-ratio:1;position:relative;display:flex;align-items:center;justify-content:center;text-align:center;-webkit-touch-callout:none}
   .tile img{width:100%;height:100%;object-fit:cover}
   .tile .ph{font-size:12px;color:var(--soft);padding:6px;word-break:break-word}
   .badge{position:absolute;left:5px;top:5px;background:#000a;border:1px solid var(--line);border-radius:999px;font-size:10px;padding:2px 7px;text-transform:uppercase;letter-spacing:.04em}
   .links{display:flex;gap:16px;justify-content:center;margin-top:18px}
   a{color:var(--blue)}
   .hide{display:none}
+${REMIND_CSS}
 </style>
 </head>
 <body>
@@ -65,11 +74,20 @@ export const DROP_HTML = /* html */ `<!doctype html>
     </div>
 
     <div class="barwrap">
-      <input id="urlin" type="text" placeholder="…or paste a URL / note and hit Enter" autocomplete="off">
+      <input id="urlin" type="text" placeholder="…or paste a URL and hit Enter" autocomplete="off">
       <button id="pick" class="ghost">Pick file</button>
       <button id="add">Save</button>
     </div>
     <input id="file" type="file" multiple class="hide" accept="image/*,video/*,application/pdf">
+
+    <div class="card">
+      <label for="noteta">✍️ Write a note</label>
+      <textarea id="noteta" placeholder="Room to actually think. ⌘/Ctrl+Enter saves."></textarea>
+      <div class="row" style="justify-content:space-between;margin-top:10px">
+        <span class="muted">Hold down any recent tile to set a ⏰ reminder on it.</span>
+        <button id="savenote">Save note</button>
+      </div>
+    </div>
 
     <div class="card">
       <div class="row" style="justify-content:space-between">
@@ -83,11 +101,13 @@ export const DROP_HTML = /* html */ `<!doctype html>
 
   <div class="links">
     <a href="/browse">Gallery</a>
+    <a href="#" id="upcoming">⏰ Reminders</a>
     <a href="#" id="logout">Reset token</a>
   </div>
 </div>
 <div id="toast" class="toast"></div>
-
+${REMIND_HTML}
+<script>${REMIND_JS}</script>
 <script>
 const KEY="bigbrain_token";
 let token=localStorage.getItem(KEY)||"";
@@ -113,6 +133,7 @@ $("#savetok").onclick=async()=>{
   }catch(e){$("#tokmsg").textContent="Couldn't reach the Worker.";}
 };
 $("#logout").onclick=e=>{e.preventDefault();localStorage.removeItem(KEY);token="";show();};
+$("#upcoming").onclick=e=>{e.preventDefault();BB.openUpcoming();};
 
 // ---- saving ----
 async function saveJSON(payload){
@@ -133,11 +154,18 @@ async function handleText(text){
 async function handleFiles(files){
   for(const f of files){try{const ref=await saveBlob(f);toast("Saved → "+ref.category,"ok");prepend(ref);}catch(e){toast("Failed: "+e.message,"bad");}}
 }
+async function saveNote(){
+  const ta=$("#noteta");const text=ta.value.trim();
+  if(!text){toast("Nothing to save","bad");return;}
+  try{const ref=await saveJSON({text});ta.value="";toast("Note saved 📝","ok");prepend(ref);}
+  catch(e){toast("Failed: "+e.message,"bad");}
+}
 
 // ---- recent strip ----
 function tile(ref){
   const d=document.createElement("a");d.className="tile";d.href=ref.url||("/browse#"+ref.id);d.target=ref.url?"_blank":"_self";
   d.innerHTML='<span class="badge">'+ref.category+'</span>'+(ref.image?'<img loading="lazy" src="'+ref.image+'">':'<span class="ph">'+(ref.title||ref.host||ref.category)+'</span>');
+  BB.longPress(d,()=>({id:ref.id,title:(ref.title||(ref.text||"").split("\\n")[0]||ref.host||"").slice(0,200),url:ref.url||""}));
   return d;
 }
 function prepend(ref){const r=$("#recent");$("#emptyrecent").classList.add("hide");r.prepend(tile(ref));while(r.children.length>12)r.removeChild(r.lastChild);}
@@ -164,8 +192,10 @@ $("#pick").onclick=()=>$("#file").click();
 $("#file").onchange=e=>{handleFiles([...e.target.files]);e.target.value="";};
 $("#add").onclick=()=>{const v=$("#urlin").value;$("#urlin").value="";handleText(v);};
 $("#urlin").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();const v=e.target.value;e.target.value="";handleText(v);}});
+$("#savenote").onclick=saveNote;
+$("#noteta").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();saveNote();}});
 window.addEventListener("paste",e=>{
-  if(document.activeElement===$("#urlin")||document.activeElement===$("#tok"))return;
+  if(document.activeElement===$("#urlin")||document.activeElement===$("#tok")||document.activeElement===$("#noteta"))return;
   const items=[...(e.clipboardData?.items||[])];
   const imgs=items.filter(i=>i.type.startsWith("image/")).map(i=>i.getAsFile()).filter(Boolean);
   if(imgs.length){e.preventDefault();return handleFiles(imgs);}

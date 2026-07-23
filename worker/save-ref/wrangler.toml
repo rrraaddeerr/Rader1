@@ -22,7 +22,22 @@ id = "REPLACE_WITH_KV_ID"
 # binding = "REFS_R2"
 # bucket_name = "save-ref-blobs"
 
+# Minute cron: fires due reminders (push / WhatsApp / SMS) and purges trash
+# older than 30 days. Free plan allows this.
+[triggers]
+crons = ["* * * * *"]
+
 # AUTH_TOKEN is a secret, never committed. Set it with:
 #   openssl rand -hex 32           # copy the output -> this is your Big Brain token
 #   npx wrangler secret put AUTH_TOKEN
 # Paste the SAME value into the /drop page's first-time setup field.
+#
+# OPTIONAL — reminder delivery over WhatsApp / SMS via Twilio. Each channel
+# only appears in the "Remind me" sheet once its secrets exist:
+#   npx wrangler secret put TWILIO_ACCOUNT_SID
+#   npx wrangler secret put TWILIO_AUTH_TOKEN
+#   npx wrangler secret put REMINDER_PHONE        # your phone, e.g. +17785550000
+#   npx wrangler secret put TWILIO_FROM           # Twilio number -> enables SMS
+#   npx wrangler secret put TWILIO_WHATSAPP_FROM  # Twilio WhatsApp sender -> enables WhatsApp
+# (Big Brain push notifications need no secrets — the VAPID keypair is
+# auto-generated into KV on first use.)

@@ -12,6 +12,14 @@ it under a new name first, try it, then point your bookmark at it when happy.
 - **A gallery (`/browse`)** — actually *see* everything you saved: thumbnails,
   category filter chips, full-text search, **edit (re-tag / re-categorize)**,
   delete, export. (The original only let you drop, never look.)
+- **A trash can** — deleting moves things to `🗑 trash` where they can be
+  restored for 30 days before being purged for good. No more accidental losses.
+- **Real note editing** — every card's ✎ editor now has a title field and a
+  big textarea for the note text, and `/drop` has a proper "✍️ Write a note"
+  composer with room to think (⌘/Ctrl+Enter saves).
+- **Hold-down reminders** — long-press any card or tile (or tap its ⏰) to get
+  reminded about it: a push **notification from Big Brain**, a **WhatsApp/SMS**
+  via Twilio, and/or an **Apple Reminders / Calendar** `.ics` download.
 - **Recent strip on `/drop`** — instant visual confirmation each save landed.
 - **Richer auto-categorization** — image / video / audio / post / article / code /
   shop / document / note / link, by content-type, file extension, and a domain
@@ -31,10 +39,20 @@ it under a new name first, try it, then point your bookmark at it when happy.
 | POST | `/save` | token | save a link/note (JSON) or file (raw bytes) |
 | GET | `/api/list?q=&cat=&cursor=&limit=` | token | list / search / filter |
 | GET | `/api/ref/:id` | token | fetch one ref |
-| PATCH | `/api/ref/:id` | token | edit a ref's `category` / `tags` / `title` |
-| DELETE | `/api/ref/:id` | token | delete a ref (+ its blob) |
+| PATCH | `/api/ref/:id` | token | edit `category` / `tags` / `title` / `text` / `desc` |
+| DELETE | `/api/ref/:id` | token | move a ref to the trash (blob kept) |
+| POST | `/api/ref/:id/restore` | token | bring a trashed ref back |
+| GET | `/api/trash` | token | list the trash (auto-purges after 30 days) |
+| DELETE | `/api/trash/:id` | token | delete forever (+ its blob) |
 | GET | `/api/export` | token | NDJSON of all refs |
 | POST | `/api/import` | token | bulk insert (array of refs) |
+| GET | `/api/reminders/config` | token | which reminder channels are available |
+| GET/POST | `/api/reminders` | token | list upcoming / schedule a reminder |
+| DELETE | `/api/reminders/:id` | token | cancel a reminder |
+| POST | `/api/reminders/ics` | token | downloadable `.ics` for Apple Reminders/Calendar |
+| POST | `/api/push/subscribe` | token | register this device for notifications |
+| GET | `/api/push/pending?k=` | subKey capability | the service worker pulls due notifications |
+| GET | `/sw.js`, `/manifest.json`, `/icon.svg` | public | notification SW + PWA bits |
 | GET | `/blob/:key` | public (key is the capability) | raw upload bytes |
 | GET | `/health` | public | liveness |
 
@@ -60,6 +78,50 @@ Optional, for lots of large uploads:
 npx wrangler r2 bucket create save-ref-blobs
 # uncomment the [[r2_buckets]] block in wrangler.toml
 ```
+
+## Reminders — how each channel works
+
+Hold down any card in `/browse` (or any recent tile on `/drop`), or tap its
+⏰ button. Pick a time (In 1 hour / Tonight / Tomorrow 9am / custom) and how
+you want to be nagged. A minute-cron on the Worker fires whatever is due.
+
+**🔔 Notification from Big Brain (web push)** — zero setup: the VAPID keypair
+is auto-generated into KV the first time it's needed. The first time you set a
+push reminder, the browser asks for notification permission and registers this
+device. Each device you do that on gets the notification.
+*iPhone caveat (Apple's rule, not ours):* web push only works from an
+installed web app — in Safari hit **Share → Add to Home Screen**, open Big
+Brain from that icon, then set a push reminder once to grant permission.
+
+**💬 WhatsApp / 📱 SMS (Twilio)** — appears in the sheet only once the Twilio
+secrets exist on the Worker:
+
+```bash
+npx wrangler secret put TWILIO_ACCOUNT_SID
+npx wrangler secret put TWILIO_AUTH_TOKEN
+npx wrangler secret put REMINDER_PHONE        # your phone, e.g. +17785550000
+npx wrangler secret put TWILIO_FROM           # a Twilio number -> enables SMS
+npx wrangler secret put TWILIO_WHATSAPP_FROM  # Twilio WhatsApp sender -> enables WhatsApp
+```
+
+(Twilio's free trial + WhatsApp sandbox is enough for personal use.)
+
+**🍎 Apple Reminders / Calendar (.ics)** — no server involvement: picking it
+downloads a calendar file with an alert at the due time. Opening it on
+iPhone/Mac adds it to Apple Calendar with an alarm; on a Mac you can drag it
+into Reminders instead. This one fires from Apple's side, so it works even if
+the Worker is asleep.
+
+Scheduled reminders live in KV (`rem:` keys), fire from the `[triggers]`
+minute-cron in `wrangler.toml`, and retry up to 5 times if a channel fails.
+See what's queued via the ⏰ button in the gallery header.
+
+## Trash
+
+Deleting from the gallery is now a soft delete: the ref (and its uploaded
+blob) moves to `trash:` keys, restorable from the `🗑 trash` chip in `/browse`.
+Anything older than 30 days is purged automatically (lazily on trash views and
+by the minute-cron). "Delete forever" in the trash view skips the wait.
 
 ## Deploy
 
