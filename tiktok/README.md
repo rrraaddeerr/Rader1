@@ -3,7 +3,15 @@
 A complete, ready-to-execute kit for launching a faceless, AI-assisted TikTok
 account with a **before and after** theme, operated from Canada.
 
-## The one-paragraph plan
+> **⚡ Concept update (2026-07-23):** the primary concept is now
+> **[the Factory](factory/README.md)** — *Stuff × Receipts, FROM 2030*:
+> everyday objects today → their 2030 versions, every claim timestamped,
+> receipts posted when reality catches up, fed by Rader's Big Brain
+> reference inbox. The photo-restoration kit below remains fully built as
+> the documented alternate lane. The platform rules, monetization plan
+> (MONETIZATION.md), and account setup (ACCOUNT_SETUP.md) apply to both.
+
+## The one-paragraph plan (alternate lane: restoration)
 
 Post one before/after video per day for 30 days in ONE sub-niche.
 Primary lane: **AI photo restoration** — old, damaged, or black-and-white
