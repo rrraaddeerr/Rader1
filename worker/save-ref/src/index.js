@@ -62,6 +62,7 @@ import {
 } from "./reminders.js";
 import { getVapid, sendPush } from "./push.js";
 import { smsConfig, sendTwilio } from "./sms.js";
+import { ICON_SVG, ICON_PNG_180 } from "./icon.js";
 
 const TRASH_TTL_DAYS = 30;
 const NOTE_MAX = 20000;
@@ -149,13 +150,11 @@ const MANIFEST = JSON.stringify({
   display: "standalone",
   background_color: "#0f1115",
   theme_color: "#0f1115",
-  icons: [{ src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
+  icons: [
+    { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+    { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png", purpose: "any" },
+  ],
 });
-
-const ICON_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
-  '<rect width="100" height="100" rx="22" fill="#0f1115"/>' +
-  '<text x="50" y="68" font-size="58" text-anchor="middle">🧠</text></svg>';
 
 export default {
   async fetch(request, env, ctx) {
@@ -180,6 +179,10 @@ export default {
       if (path === "/icon.svg" && request.method === "GET")
         return new Response(ICON_SVG, {
           headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400", ...CORS },
+        });
+      if (path === "/apple-touch-icon.png" && request.method === "GET")
+        return new Response(Uint8Array.from(atob(ICON_PNG_180), (c) => c.charCodeAt(0)), {
+          headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400", ...CORS },
         });
 
       // ---- public blob read (key is the capability) ----

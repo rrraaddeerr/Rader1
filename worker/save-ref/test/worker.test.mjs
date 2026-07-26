@@ -76,6 +76,15 @@ const run = async () => {
   let r = await call("/health");
   eq("health 200", r.status, 200);
 
+  // icons
+  r = await call("/icon.svg");
+  eq("icon.svg 200", r.status, 200);
+  ok("icon is a real svg", (await r.text()).includes("<svg"));
+  r = await call("/apple-touch-icon.png");
+  eq("apple-touch-icon 200", r.status, 200);
+  const pngBytes = new Uint8Array(await r.arrayBuffer());
+  ok("apple-touch-icon is a real png", pngBytes[0] === 0x89 && pngBytes[1] === 0x50);
+
   // auth required
   r = await call("/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   eq("save without token -> 401", r.status, 401);
