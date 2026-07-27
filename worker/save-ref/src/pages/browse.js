@@ -41,6 +41,24 @@ export const BROWSE_HTML = /* html */ `<!doctype html>
   .muted{color:var(--soft)}
   .empty{text-align:center;color:var(--soft);padding:60px 0}
   .hide{display:none}
+  .sim{position:absolute;right:72px;top:8px;background:#000b;border:1px solid var(--line);color:#fff;border-radius:8px;padding:3px 8px;font-size:12px;opacity:0;transition:.15s}
+  .card:hover .sim{opacity:1}
+  .sim:hover{background:var(--blue);border-color:var(--blue)}
+  /* --- ask --- */
+  .askbar{display:flex;gap:8px;margin-bottom:14px}
+  .askbar input{flex:1}
+  .toggle{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .toggle button{border:0;border-radius:0;padding:7px 12px;font-size:13px}
+  .ans{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px}
+  .ans .body{white-space:pre-wrap;line-height:1.62}
+  .ans .body b{color:#fff}
+  .ans .foot{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+  .src{display:inline-flex;align-items:center;gap:6px;background:#0b0e14;border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--ink);max-width:260px}
+  .src:hover{border-color:var(--blue)}
+  .src .n{color:var(--blue);font-weight:800}
+  .src .tt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--blue);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -48,9 +66,21 @@ export const BROWSE_HTML = /* html */ `<!doctype html>
   <div class="top">
     <h1>🧠 Gallery</h1>
     <a href="/drop">+ Drop</a>
+    <a href="/shortcuts">iPhone</a>
     <input id="q" type="text" placeholder="Search title, host, tags, notes…">
+    <div class="toggle" title="Keyword matches the letters. Meaning matches the idea.">
+      <button id="mkw" class="on">keyword</button><button id="msem">meaning</button>
+    </div>
     <button id="export">Export</button>
   </div>
+
+  <div class="askbar">
+    <input id="ask" type="text" placeholder="Ask Big Brain — “what's my thing with chrome tailoring?”">
+    <button id="askgo">Ask</button>
+    <button id="deep" title="Use Claude for synthesis instead of the fast model">deep</button>
+  </div>
+  <div id="answer" class="ans hide"></div>
+
   <div id="chips" class="chips"></div>
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty hide">Nothing here yet.</div>
@@ -61,12 +91,17 @@ export const BROWSE_HTML = /* html */ `<!doctype html>
 const KEY="bigbrain_token";
 let token=localStorage.getItem(KEY)||"";
 const $=s=>document.querySelector(s);
-let cat="", q="", cursor=null, loading=false;
+let cat="", q="", cursor=null, loading=false, mode="kw", deep=false;
 
 if(!token){location.href="/drop";}
 
 async function api(path){
   const r=await fetch(path,{headers:{"X-Auth-Token":token}});
+  if(r.status===401){localStorage.removeItem(KEY);location.href="/drop";throw new Error("401");}
+  return r;
+}
+async function post(path,body){
+  const r=await fetch(path,{method:"POST",headers:{"X-Auth-Token":token,"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(r.status===401){localStorage.removeItem(KEY);location.href="/drop";throw new Error("401");}
   return r;
 }
@@ -84,6 +119,7 @@ function card(ref){
   const opts=CATS.filter(Boolean).map(c=>'<option value="'+c+'"'+(c===ref.category?' selected':'')+'>'+c+'</option>').join("");
   el.innerHTML=
     '<span class="badge">'+ref.category+'</span>'+
+    '<button class="sim" title="Find similar">≈</button>'+
     '<button class="edit" title="Edit">✎</button>'+
     '<button class="del" title="Delete">✕</button>'+
     '<a class="thumb" href="'+href+'" target="_blank">'+inner+'</a>'+
@@ -110,13 +146,47 @@ function card(ref){
     await fetch("/api/ref/"+encodeURIComponent(ref.id),{method:"DELETE",headers:{"X-Auth-Token":token}});
     el.remove();
   };
+  el.querySelector(".sim").onclick=()=>showSimilar(ref);
   return el;
 }
+
+// Pivot the grid to "things like this one" — pure vector similarity, no model.
+async function showSimilar(ref){
+  note("Similar to <b>"+esc(ref.title||ref.host||"this")+"</b> <span class=spin></span>");
+  try{
+    const r=await api("/api/similar/"+encodeURIComponent(ref.id)+"?limit=24");
+    const d=await r.json();
+    if(!d.ok){note("Couldn't do that: "+esc(d.error||"error"));return;}
+    const grid=$("#grid");grid.innerHTML="";
+    (d.refs||[]).forEach(x=>grid.appendChild(card(x)));
+    cursor=null;$("#more").classList.add("hide");
+    $("#empty").classList.toggle("hide",grid.children.length>0);
+    note("Similar to <b>"+esc(ref.title||ref.host||"this")+"</b> — "+(d.refs||[]).length+" refs. "+
+         '<a href="#" id="clearsim">Back to everything</a>');
+    const c=document.getElementById("clearsim");
+    if(c)c.onclick=e=>{e.preventDefault();$("#answer").classList.add("hide");reset();};
+  }catch(e){}
+}
+
+function note(htmlStr){const a=$("#answer");a.classList.remove("hide");a.innerHTML='<div class="body">'+htmlStr+'</div>';}
 function icon(c){return({image:"🖼️",video:"🎬",audio:"🎵",post:"💬",article:"📰",code:"💻",shop:"🛍️",document:"📄",note:"📝"})[c]||"🔗";}
 function esc(s){return(s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));}
 
 async function load(append){
   if(loading)return;loading=true;
+  // "meaning" mode goes through the vector index instead of substring matching,
+  // so "warehouse lighting" finds a ref titled "sodium vapour, Gastown 1987".
+  if(mode==="sem"&&q){
+    try{
+      const r=await post("/api/search",{q,cat,limit:60});const d=await r.json();
+      const grid=$("#grid");grid.innerHTML="";
+      if(!d.ok){note("Semantic search is off: "+esc(d.error||"error"));}
+      else (d.refs||[]).forEach(ref=>grid.appendChild(card(ref)));
+      cursor=null;$("#more").classList.add("hide");
+      $("#empty").classList.toggle("hide",grid.children.length>0);
+    }catch(e){}finally{loading=false;}
+    return;
+  }
   const p=new URLSearchParams();p.set("limit","60");if(cat)p.set("cat",cat);if(q)p.set("q",q);if(append&&cursor)p.set("cursor",cursor);
   try{
     const r=await api("/api/list?"+p.toString());const d=await r.json();
@@ -127,6 +197,44 @@ async function load(append){
   }catch(e){}finally{loading=false;}
 }
 function reset(){cursor=null;renderChips();load(false);}
+
+// ---- ask ----
+// Renders the model's answer with [1]/[2] citations turned into source chips.
+function renderAnswer(d){
+  const a=$("#answer");a.classList.remove("hide");
+  const srcs=d.sources||[];
+  let body=esc(d.answer||"").replace(/\\[(\\d+)\\]/g,(m,n)=>{
+    const s=srcs[+n-1];
+    return s?'<b>['+n+']</b>':m;
+  });
+  const chips=srcs.map(s=>{
+    const label='<span class="n">'+s.n+'</span><span class="tt">'+esc(s.title)+'</span>';
+    return s.url?'<a class="src" href="'+esc(s.url)+'" target="_blank">'+label+'</a>'
+                :'<span class="src">'+label+'</span>';
+  }).join("");
+  a.innerHTML='<div class="body">'+body+'</div>'+
+    (srcs.length?'<div class="foot"><span class="muted" style="font-size:12px">sources</span>'+chips+
+      '<span class="muted" style="font-size:11px;margin-left:auto">'+esc(d.model||"")+'</span></div>':"");
+}
+
+async function doAsk(){
+  const question=$("#ask").value.trim();
+  if(!question)return;
+  note("Thinking <span class=spin></span>");
+  try{
+    const r=await post("/api/ask",{q:question,deep});
+    const d=await r.json();
+    if(!d.ok){note(esc(d.error||"Something went wrong."));return;}
+    renderAnswer(d);
+  }catch(e){note("Couldn't reach the brain.");}
+}
+$("#askgo").onclick=doAsk;
+$("#ask").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();doAsk();}});
+$("#deep").onclick=()=>{deep=!deep;$("#deep").classList.toggle("on",deep);};
+
+function setMode(m){mode=m;$("#mkw").classList.toggle("on",m==="kw");$("#msem").classList.toggle("on",m==="sem");if(q)reset();}
+$("#mkw").onclick=()=>setMode("kw");
+$("#msem").onclick=()=>setMode("sem");
 
 let t;$("#q").addEventListener("input",e=>{clearTimeout(t);t=setTimeout(()=>{q=e.target.value.trim();reset();},250);});
 $("#more").onclick=()=>load(true);

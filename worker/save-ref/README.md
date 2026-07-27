@@ -21,22 +21,69 @@ it under a new name first, try it, then point your bookmark at it when happy.
 - **Multi-file drop + paste** — drag many files, paste screenshots or URLs (⌘V).
 - **Export / import** — NDJSON round-trip, so you can migrate data in and out.
 - **R2-ready** — large uploads can offload to R2 instead of KV (optional).
+- **It thinks now** — semantic search, an Ask box, "do I have anything like
+  this?" against rent.co inventory, and a taste profile future-outfit can read.
+  See [The brain](#the-brain--asking-your-archive-questions).
+
+## The brain — asking your archive questions
+
+Big Brain isn't just storage: it *learns from what you drop*, and you can ask
+it things.
+
+Nothing here trains a model — that's the wrong tool. Training costs millions
+and freezes at training time; your archive changes daily. Instead this is
+**RAG (retrieval-augmented generation)**: every ref is converted into an
+*embedding* (a numeric fingerprint of its meaning) and stored in a vector
+index. Ask a question, and the question is fingerprinted the same way, the
+nearest refs are pulled back, and a model answers **from them**, with sources.
+
+A ref is searchable the second it lands. Delete it and it's forgotten. No
+retraining, ever.
+
+### What it does before embedding
+
+Titles are too thin to reason over, so each ref is deepened first:
+
+| kind | what gets read |
+|---|---|
+| image / screenshot | **vision caption** — the actual garments, materials, colour, era, mood |
+| article / post / shop | full readable page text, not just the `og:description` |
+| video | the caption track (YouTube), so it knows what was *said* |
+| note | your own words — the most valuable signal in the archive |
+
+That happens in the background after the save returns, so dropping still feels
+instant.
+
+### Two tiers
+
+- **cheap** (default) — Workers AI, inside the worker, no extra bill.
+- **deep** (`deep: true`) — Claude, for synthesis and taste work where voice
+  matters. Falls back to cheap automatically if no API key is set.
 
 ## Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/drop` | public page | the drop SPA |
-| GET | `/browse` | public page | the gallery SPA |
-| POST | `/save` | token | save a link/note (JSON) or file (raw bytes) |
-| GET | `/api/list?q=&cat=&cursor=&limit=` | token | list / search / filter |
+| GET | `/browse` | public page | the gallery SPA + Ask box |
+| GET | `/shortcuts` | public page | iPhone setup guide (share sheet, Back Tap, Siri) |
+| POST | `/save?similar=1` | token | save a link/note (JSON, with `note`) or file (raw bytes, `X-Note`) |
+| GET | `/api/list?q=&cat=&cursor=&limit=` | token | list / keyword search / filter |
 | GET | `/api/ref/:id` | token | fetch one ref |
-| PATCH | `/api/ref/:id` | token | edit a ref's `category` / `tags` / `title` |
-| DELETE | `/api/ref/:id` | token | delete a ref (+ its blob) |
+| PATCH | `/api/ref/:id` | token | edit a ref's `category` / `tags` / `title` / `note` |
+| DELETE | `/api/ref/:id` | token | delete a ref (+ its blob, + its vector) |
 | GET | `/api/export` | token | NDJSON of all refs |
 | POST | `/api/import` | token | bulk insert (array of refs) |
 | GET | `/blob/:key` | public (key is the capability) | raw upload bytes |
-| GET | `/health` | public | liveness |
+| GET | `/health` | public | liveness + which parts of the brain are wired |
+| **POST** | **`/api/search`** | token | semantic search — `{q, cat, limit}` |
+| **POST/GET** | **`/api/ask`** | token | answer from your refs — `{q, deep}`; `?format=text` for Siri |
+| **GET** | **`/api/similar/:id`** | token | refs nearest to this one |
+| **GET** | **`/api/profile?refresh=1`** | token | your taste fingerprint (future-outfit reads this) |
+| **POST** | **`/api/match`** | token | "do I have anything like this?" — `{q}`, `{refId}`, or raw image bytes |
+| **POST** | **`/api/set-draft`** | token | draft a client Set from `{brief}` |
+| **POST** | **`/api/reindex?deep=1`** | token | backfill embeddings for everything already saved |
+| **POST** | **`/api/inventory/index`** | token | load rent.co items into the item index |
 
 Auth = header `X-Auth-Token: <AUTH_TOKEN>`. The token is stored only in the
 browser's localStorage and sent only to your Worker.
@@ -61,6 +108,81 @@ npx wrangler r2 bucket create save-ref-blobs
 # uncomment the [[r2_buckets]] block in wrangler.toml
 ```
 
+### Turning the brain on (required before `deploy`)
+
+`wrangler.toml` binds two Vectorize indexes. They must exist first or the
+deploy fails saying the index isn't found:
+
+```bash
+npx wrangler vectorize create bigbrain-refs      --dimensions=768 --metric=cosine
+npx wrangler vectorize create bigbrain-inventory --dimensions=768 --metric=cosine
+```
+
+768 is the output size of `@cf/baai/bge-base-en-v1.5` (see `src/embed.js`).
+Workers AI needs no setup — the `[ai]` binding is enough.
+
+Optional, for the deep tier:
+
+```bash
+npx wrangler secret put ANTHROPIC_API_KEY
+```
+
+Without it, `deep` requests quietly use the fast model instead.
+
+Then backfill everything you'd already saved:
+
+```bash
+# fast pass — embeds titles/descriptions you already have
+curl -X POST "$URL/api/reindex" -H "X-Auth-Token: $TOKEN"
+
+# deep pass — also fetches page text, transcripts, and captions images.
+# Returns a cursor; keep calling with it until "done": true.
+curl -X POST "$URL/api/reindex?deep=1&batch=10" -H "X-Auth-Token: $TOKEN"
+```
+
+### Feeding rent.co and future-outfit
+
+Index the archive so Big Brain knows what you actually own:
+
+```bash
+# from the repo root
+BIGBRAIN_URL=https://save-ref-v2.<you>.workers.dev \
+BIGBRAIN_TOKEN=<token> \
+node scripts/index-inventory.mjs
+```
+
+Then:
+
+```bash
+# "do I have anything like this?" — text, a saved ref, or a raw image
+curl -X POST "$URL/api/match" -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"q":"scuffed steel rolling cart, hospital, cold light"}'
+
+# same thing from a photo
+curl -X POST "$URL/api/match" -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: image/jpeg" --data-binary @runway.jpg
+
+# draft a client Set from a director's brief
+curl -X POST "$URL/api/set-draft" -H "X-Auth-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"brief":"1970s Vancouver newsroom, fluorescent, nicotine walls"}'
+
+# the taste fingerprint future-outfit matches looks against
+curl "$URL/api/profile" -H "X-Auth-Token: $TOKEN"
+```
+
+Re-run `index-inventory.mjs` whenever `data/inventory.json` changes — it
+upserts by item id, so it refreshes rather than duplicates.
+
+### On your phone
+
+Open `/shortcuts` on the iPhone (after saving your token on `/drop`) — it
+fills in your real URL and token and walks through four entry points: the
+**share sheet** from any app, **Back Tap** for a zero-UI clipboard grab,
+a **capture + one-line note** variant, and **"Hey Siri, ask Big Brain"** with
+a spoken answer.
+
 ## Deploy
 
 ```bash
@@ -73,7 +195,7 @@ token, and start dropping. The gallery is at `/browse`.
 ## Develop / test locally
 
 ```bash
-npm test                 # pure-logic categorization tests (no deps, no network)
+npm test                 # all suites: no deps, no network, no bindings needed
 npm run dev              # wrangler dev --local: real KV in miniflare, hot reload
 # then: curl -X POST localhost:8787/save -H "X-Auth-Token: dev" \
 #   -H "Content-Type: application/json" -d '{"url":"https://github.com/x/y"}'

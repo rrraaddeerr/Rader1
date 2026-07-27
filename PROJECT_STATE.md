@@ -146,6 +146,31 @@ respond Approve / Maybe / Pass per item. Real-time tally back to operator.
   - `NEXT_PUBLIC_RENTCO_SETS_URL` — same as RENTCO_SETS_URL (used by client
     code on /set/[slug] to POST responses)
 
+## Big Brain (reference archive + taste layer)
+
+The drop-anything reference inbox at `worker/save-ref/`, now with an LLM layer
+over it. Not a trained model — **RAG**: every ref is embedded into Cloudflare
+Vectorize on save, and questions retrieve the nearest refs for a model to
+answer from. New refs are searchable instantly; deleted refs are forgotten.
+
+- **Deep enrichment on save** — images get a vision caption, articles get full
+  page text, YouTube gets the caption track. Runs after the response, so drops
+  stay instant.
+- **Two model tiers** — Workers AI by default (free, in-worker); Claude when
+  `deep` is set, for synthesis and voice. Needs `ANTHROPIC_API_KEY` secret.
+- **Surfaces** — Ask box + `meaning` search mode on `/browse`, "you've saved
+  things like this" on `/drop`, and `/shortcuts` for the iPhone (share sheet,
+  Back Tap, Siri voice ask).
+- **Feeds rent.co** — `POST /api/match` ranks `data/inventory.json` against an
+  image, a ref, or a description; `POST /api/set-draft` drafts a client Set
+  from a brief (hallucinated item ids are filtered out server-side).
+- **Feeds future-outfit** — `GET /api/profile` returns a cached taste
+  fingerprint (palette / materials / silhouettes / eras / keywords).
+- **Setup:** two Vectorize indexes must be created before `wrangler deploy`,
+  then backfill with `POST /api/reindex?deep=1` and load inventory with
+  `node scripts/index-inventory.mjs`. Full steps in
+  `worker/save-ref/README.md`.
+
 ## Inquiry routing
 
 - Always logs to console + appends to `data/submissions/<kind>.ndjson`

@@ -16,11 +16,23 @@
  *   GET    /api/export  -> NDJSON of all refs     (auth)
  *   POST   /api/import  -> bulk insert refs        (auth)
  *   GET    /blob/:key   -> raw bytes for an upload (public; key is unguessable)
+ *   GET    /shortcuts   -> iOS Shortcuts setup guide
+ *
+ * The brain (needs the AI + VECTORS bindings; everything above works without them)
+ *   POST   /api/search      -> semantic search over your refs
+ *   POST   /api/ask         -> answer a question from your refs, with sources
+ *   GET    /api/similar/:id -> refs nearest to this one
+ *   GET    /api/profile     -> your taste fingerprint (future-outfit reads this)
+ *   POST   /api/match       -> "do I have anything like this?" vs rent.co inventory
+ *   POST   /api/set-draft   -> draft a client Set from a brief
+ *   POST   /api/reindex     -> (re)build embeddings for everything already saved
+ *   POST   /api/inventory/index -> load rent.co inventory into the item index
  *
  * Storage (bound KV namespace REFS_KV)
  *   ref:<id>     -> ref object JSON. id = reverse-timestamp + rand, so a plain
  *                   key-prefix list comes back newest-first with cursor paging.
  *   blob:<key>   -> uploaded bytes (KV). Set REFS_R2 to offload large blobs.
+ *   profile:v1   -> cached vibe profile
  *
  * Auth: every write/read API requires header `X-Auth-Token: <AUTH_TOKEN>`.
  * Blobs are served unauthenticated at /blob/<key> so <img> tags work; the
@@ -29,8 +41,22 @@
 
 import { categorize, ALL_CATEGORIES, parseUrl } from "./categorize.js";
 import { fetchMeta } from "./og.js";
+import { enrichRef } from "./enrich.js";
+import {
+  brainReady,
+  indexRef,
+  unindexRef,
+  searchRefs,
+  searchRefsByVector,
+  getRefVector,
+  indexInventory,
+  inventoryReady,
+} from "./embed.js";
+import { askBrain, hydrate, sourceOf, vibeProfile } from "./ask.js";
+import { matchArchive, draftSet } from "./rentco.js";
 import { DROP_HTML } from "./pages/drop.js";
 import { BROWSE_HTML } from "./pages/browse.js";
+import { SHORTCUTS_HTML } from "./pages/shortcuts.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +75,36 @@ const html = (markup) =>
   new Response(markup, {
     headers: { "Content-Type": "text/html; charset=utf-8", ...CORS },
   });
+
+const BRAIN_OFF = {
+  ok: false,
+  error:
+    "The brain isn't wired up. Add the [ai] and [[vectorize]] bindings in wrangler.toml, " +
+    "create the index, redeploy, then POST /api/reindex. See README.",
+};
+
+/**
+ * Run work after the response goes out. Falls back to fire-and-forget when
+ * there's no execution context (tests, direct invocation).
+ */
+function defer(ctx, promise) {
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(promise);
+  else Promise.resolve(promise).catch(() => {});
+}
+
+/** Parse a numeric input with a default and a hard ceiling. */
+function clamp(v, dflt, max) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n <= 0) return dflt;
+  return Math.min(n, max);
+}
+
+/** Accept 1/true/yes/on from query strings as well as real booleans. */
+function truthy(v) {
+  if (typeof v === "boolean") return v;
+  if (v == null) return false;
+  return /^(1|true|yes|on)$/i.test(String(v).trim());
+}
 
 function requireToken(request, env) {
   const token = request.headers.get("X-Auth-Token") || "";
@@ -119,7 +175,16 @@ export default {
       if (path === "/") return Response.redirect(`${url.origin}/drop`, 302);
       if (path === "/drop" && request.method === "GET") return html(DROP_HTML);
       if (path === "/browse" && request.method === "GET") return html(BROWSE_HTML);
-      if (path === "/health") return json({ ok: true, categories: ALL_CATEGORIES });
+      if (path === "/shortcuts" && request.method === "GET") return html(SHORTCUTS_HTML);
+      if (path === "/health") {
+        return json({
+          ok: true,
+          categories: ALL_CATEGORIES,
+          brain: brainReady(env),
+          inventory: inventoryReady(env),
+          deep: Boolean(env.ANTHROPIC_API_KEY),
+        });
+      }
 
       // ---- public blob read (key is the capability) ----
       if (path.startsWith("/blob/") && request.method === "GET") {
@@ -173,13 +238,18 @@ export default {
           }
           if (body.tags !== undefined) ref.tags = normalizeTags(body.tags);
           if (body.title !== undefined) ref.title = String(body.title).slice(0, 300);
+          if (body.note !== undefined) ref.note = String(body.note).slice(0, 1000);
           await env.REFS_KV.put(`ref:${id}`, JSON.stringify(ref));
+          // Re-tagging changes what the ref means — re-embed it.
+          defer(ctx, indexRef(env, ref));
           return json({ ok: true, ref });
         }
         if (request.method === "DELETE") {
           const ref = await env.REFS_KV.get(`ref:${id}`, "json");
           if (ref?.blobKey) await deleteBlob(env, ref.blobKey);
           await env.REFS_KV.delete(`ref:${id}`);
+          // Deleted means forgotten — drop it from the index too.
+          defer(ctx, unindexRef(env, id));
           return json({ ok: true });
         }
       }
@@ -217,6 +287,130 @@ export default {
         return json({ ok: true, imported: n });
       }
 
+      // ---- the brain ----------------------------------------------------
+
+      // POST /api/search {q, limit, cat} — semantic search
+      if (path === "/api/search" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        if (!brainReady(env)) return json(BRAIN_OFF, 503);
+        const body = (await request.json().catch(() => null)) || {};
+        const q = String(body.q || "").trim();
+        if (!q) return json({ ok: false, error: "Missing q" }, 400);
+        const limit = clamp(body.limit, 20, 100);
+        const matches = await searchRefs(env, q, { topK: limit, category: body.cat || "" });
+        const refs = await hydrate(env, matches);
+        return json({ ok: true, refs, count: refs.length });
+      }
+
+      // POST /api/ask {q, deep} — retrieval + answer. Also GET for Shortcuts.
+      if (path === "/api/ask" && (request.method === "POST" || request.method === "GET")) {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        if (!brainReady(env)) return json(BRAIN_OFF, 503);
+        const body =
+          request.method === "POST" ? (await request.json().catch(() => null)) || {} : {};
+        const q = String(body.q || url.searchParams.get("q") || "").trim();
+        const deep = truthy(body.deep ?? url.searchParams.get("deep"));
+        const out = await askBrain(env, q, {
+          deep,
+          topK: clamp(body.limit ?? url.searchParams.get("limit"), 10, 40),
+          category: body.cat || url.searchParams.get("cat") || "",
+        });
+        // Shortcuts' "Speak Text" wants a bare string, not JSON.
+        const wantsText =
+          url.searchParams.get("format") === "text" ||
+          (request.headers.get("accept") || "").includes("text/plain");
+        if (wantsText) {
+          return new Response(out.answer || out.error || "", {
+            headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS },
+          });
+        }
+        return json(out, out.ok ? 200 : 400);
+      }
+
+      // GET /api/similar/:id — nearest refs to one you already saved
+      if (path.startsWith("/api/similar/") && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        if (!brainReady(env)) return json(BRAIN_OFF, 503);
+        const id = decodeURIComponent(path.slice("/api/similar/".length));
+        if (!id) return json({ ok: false, error: "Missing id" }, 400);
+        const limit = clamp(url.searchParams.get("limit"), 6, 50);
+        let vector = await getRefVector(env, id);
+        if (!vector) {
+          // Not indexed yet (or index still catching up) — index it now.
+          const ref = await env.REFS_KV.get(`ref:${id}`, "json");
+          if (!ref) return json({ ok: false, error: "Not found" }, 404);
+          await indexRef(env, ref);
+          vector = await getRefVector(env, id);
+          if (!vector) return json({ ok: true, refs: [] });
+        }
+        const matches = await searchRefsByVector(env, vector, { topK: limit, exclude: id });
+        const refs = await hydrate(env, matches);
+        return json({ ok: true, refs, count: refs.length });
+      }
+
+      // GET /api/profile — the taste fingerprint future-outfit consumes
+      if (path === "/api/profile" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        if (!brainReady(env)) return json(BRAIN_OFF, 503);
+        const out = await vibeProfile(env, {
+          refresh: truthy(url.searchParams.get("refresh")),
+          deep: !truthy(url.searchParams.get("cheap")),
+        });
+        return json(out, out.ok === false ? 400 : 200);
+      }
+
+      // POST /api/match — "do I have anything like this?" (JSON or raw image)
+      if (path === "/api/match" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const ct = request.headers.get("content-type") || "";
+        const topK = clamp(url.searchParams.get("limit"), 12, 60);
+        let out;
+        if (ct.includes("application/json")) {
+          const body = (await request.json().catch(() => null)) || {};
+          out = await matchArchive(env, { q: body.q, refId: body.refId }, { topK });
+        } else {
+          const bytes = await request.arrayBuffer();
+          out = await matchArchive(env, { bytes }, { topK });
+        }
+        return json(out, out.ok ? 200 : 400);
+      }
+
+      // POST /api/set-draft {brief} — draft a client Set from the archive
+      if (path === "/api/set-draft" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await draftSet(env, body.brief, { deep: truthy(body.deep ?? true) });
+        return json(out, out.ok ? 200 : 400);
+      }
+
+      // POST /api/reindex — backfill embeddings for everything already saved
+      if (path === "/api/reindex" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        if (!brainReady(env)) return json(BRAIN_OFF, 503);
+        return await handleReindex(env, url);
+      }
+
+      // POST /api/inventory/index — load rent.co items into the item index
+      if (path === "/api/inventory/index" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        if (!inventoryReady(env)) {
+          return json({ ok: false, error: "INV_VECTORS binding missing — see README." }, 503);
+        }
+        const body = await request.json().catch(() => null);
+        const items = Array.isArray(body) ? body : body?.items;
+        if (!Array.isArray(items)) return json({ ok: false, error: "Expected an array of items" }, 400);
+        const n = await indexInventory(env, items);
+        return json({ ok: true, indexed: n, received: items.length });
+      }
+
       return json({ ok: false, error: "Not found", path }, 404);
     } catch (err) {
       return json({ ok: false, error: String(err?.message ?? err) }, 500);
@@ -227,6 +421,7 @@ export default {
 async function handleSave(request, env, ctx, url) {
   const contentType = request.headers.get("content-type") || "";
   let ref;
+  let bytes; // kept for the vision pass when this is a file drop
 
   if (contentType.includes("application/json")) {
     const body = await request.json().catch(() => null);
@@ -234,13 +429,16 @@ async function handleSave(request, env, ctx, url) {
     const cls = categorize({ url: body.url, text: body.text });
 
     ref = baseRef(cls);
+    // Your own words about why you saved it — the single most useful signal
+    // the archive gets, because it's the only part that isn't scraped.
+    ref.note = String(body.note || "").slice(0, 1000);
     if (cls.kind === "url") {
       ref.url = parseUrl(body.url).toString();
       ref.title = (body.title || "").slice(0, 300);
       // enrich with OG metadata (best-effort, doesn't block the response long)
       const meta = await fetchMeta(ref.url);
       ref.title = ref.title || meta.title || ref.host;
-      ref.desc = (body.note || meta.description || "").slice(0, 600);
+      ref.desc = (ref.note || meta.description || "").slice(0, 600);
       ref.image = meta.image || "";
     } else if (cls.kind === "note") {
       ref.text = body.text.slice(0, 5000);
@@ -250,7 +448,7 @@ async function handleSave(request, env, ctx, url) {
     }
   } else {
     // raw bytes (file upload / pasted image)
-    const bytes = await request.arrayBuffer();
+    bytes = await request.arrayBuffer();
     if (!bytes || bytes.byteLength === 0) return json({ ok: false, error: "Empty upload" }, 400);
     const filename = request.headers.get("x-filename") || "";
     const cls = categorize({ isBlob: true, filename, contentType });
@@ -261,10 +459,52 @@ async function handleSave(request, env, ctx, url) {
     ref.title = (filename || `${cls.category} ${new Date().toLocaleDateString()}`).slice(0, 200);
     ref.bytes = bytes.byteLength;
     ref.mime = contentType;
+    // Shortcuts and the drop page can attach a one-liner to a file drop.
+    const note = request.headers.get("x-note") || "";
+    ref.note = note ? decodeURIComponent(note).slice(0, 1000) : "";
+    ref.desc = ref.note;
   }
 
   await env.REFS_KV.put(`ref:${ref.id}`, JSON.stringify(ref));
-  return json({ ok: true, ref }, 201);
+
+  // Index straight away with what we have so the ref is findable immediately,
+  // then go deeper in the background and re-index with the richer text.
+  await indexRef(env, ref).catch(() => {});
+  defer(ctx, deepen(env, ref, bytes));
+
+  const payload = { ok: true, ref };
+  // The drop page asks for this to show "you've saved things like this before".
+  if (truthy(url.searchParams.get("similar")) && brainReady(env)) {
+    try {
+      const vector = await getRefVector(env, ref.id);
+      const matches = vector
+        ? await searchRefsByVector(env, vector, { topK: 4, exclude: ref.id })
+        : [];
+      payload.similar = (await hydrate(env, matches)).map(sourceOf);
+    } catch {
+      payload.similar = [];
+    }
+  }
+  return json(payload, 201);
+}
+
+/**
+ * Background pass: pull the real content (page text, transcript, vision
+ * caption), store it on the ref, and re-embed. Runs after the response, so a
+ * save still feels instant.
+ */
+async function deepen(env, ref, bytes) {
+  try {
+    const patch = await enrichRef(env, ref, bytes);
+    if (!Object.keys(patch).length) return;
+    const current = await env.REFS_KV.get(`ref:${ref.id}`, "json");
+    if (!current) return; // deleted while we were working
+    const updated = { ...current, ...patch };
+    await env.REFS_KV.put(`ref:${ref.id}`, JSON.stringify(updated));
+    await indexRef(env, updated);
+  } catch {
+    // enrichment is a bonus; the ref is already saved and indexed
+  }
 }
 
 function baseRef(cls) {
@@ -318,8 +558,53 @@ function matches(ref, q) {
     (ref.url && ref.url.toLowerCase().includes(q)) ||
     (ref.host && ref.host.toLowerCase().includes(q)) ||
     (ref.text && ref.text.toLowerCase().includes(q)) ||
+    (ref.note && ref.note.toLowerCase().includes(q)) ||
+    (ref.caption && ref.caption.toLowerCase().includes(q)) ||
+    (ref.body && ref.body.toLowerCase().includes(q)) ||
     (ref.tags && ref.tags.join(" ").toLowerCase().includes(q))
   );
+}
+
+/**
+ * Backfill the index for refs saved before the brain existed.
+ *
+ * One call does a bounded batch and hands back a cursor, so a big archive is
+ * walked in several requests instead of blowing the Worker's CPU budget.
+ * `?deep=1` also runs the enrichment pass (slower, far better embeddings).
+ */
+async function handleReindex(env, url) {
+  const deep = truthy(url.searchParams.get("deep"));
+  const batch = clamp(url.searchParams.get("batch"), deep ? 10 : 50, 100);
+  const cursor = url.searchParams.get("cursor") || undefined;
+  const skipDone = truthy(url.searchParams.get("skipEnriched"));
+
+  const page = await env.REFS_KV.list({ prefix: "ref:", limit: batch, cursor });
+  let indexed = 0;
+  let enriched = 0;
+
+  for (const k of page.keys) {
+    const ref = await env.REFS_KV.get(k.name, "json");
+    if (!ref) continue;
+    let current = ref;
+    if (deep && !(skipDone && ref.enrichedAt)) {
+      const patch = await enrichRef(env, ref);
+      if (Object.keys(patch).length) {
+        current = { ...ref, ...patch };
+        await env.REFS_KV.put(k.name, JSON.stringify(current));
+        enriched++;
+      }
+    }
+    if (await indexRef(env, current)) indexed++;
+  }
+
+  return json({
+    ok: true,
+    indexed,
+    enriched,
+    scanned: page.keys.length,
+    cursor: page.list_complete ? null : page.cursor,
+    done: Boolean(page.list_complete),
+  });
 }
 
 async function listAll(env) {

@@ -69,7 +69,16 @@ export const DROP_HTML = /* html */ `<!doctype html>
       <button id="pick" class="ghost">Pick file</button>
       <button id="add">Save</button>
     </div>
+    <input id="note" type="text" placeholder="why are you saving this? (optional — but it's the part that sounds like you)" autocomplete="off" style="margin-top:10px">
     <input id="file" type="file" multiple class="hide" accept="image/*,video/*,application/pdf">
+
+    <div id="echo" class="card hide">
+      <div class="row" style="justify-content:space-between">
+        <strong id="echotitle">You've saved things like this</strong>
+        <button id="echoclose" class="ghost" style="padding:4px 10px">✕</button>
+      </div>
+      <div id="echoitems" class="recent"></div>
+    </div>
 
     <div class="card">
       <div class="row" style="justify-content:space-between">
@@ -83,6 +92,7 @@ export const DROP_HTML = /* html */ `<!doctype html>
 
   <div class="links">
     <a href="/browse">Gallery</a>
+    <a href="/shortcuts">iPhone setup</a>
     <a href="#" id="logout">Reset token</a>
   </div>
 </div>
@@ -115,24 +125,55 @@ $("#savetok").onclick=async()=>{
 $("#logout").onclick=e=>{e.preventDefault();localStorage.removeItem(KEY);token="";show();};
 
 // ---- saving ----
+// ?similar=1 asks the worker to hand back the nearest refs it already holds,
+// so a save immediately tells you where it sits in the archive.
 async function saveJSON(payload){
-  const r=await api("/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const r=await api("/save?similar=1",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   const d=await r.json(); if(!r.ok||!d.ok)throw new Error(d.error||"save failed");
-  return d.ref;
+  return d;
 }
-async function saveBlob(file){
-  const r=await api("/save",{method:"POST",headers:{"Content-Type":file.type||"application/octet-stream","X-Filename":encodeURIComponent(file.name||"")},body:file});
+async function saveBlob(file,note){
+  const headers={"Content-Type":file.type||"application/octet-stream","X-Filename":encodeURIComponent(file.name||"")};
+  if(note)headers["X-Note"]=encodeURIComponent(note);
+  const r=await api("/save?similar=1",{method:"POST",headers,body:file});
   const d=await r.json(); if(!r.ok||!d.ok)throw new Error(d.error||"save failed");
-  return d.ref;
+  return d;
 }
+function takeNote(){const el=$("#note");const v=el.value.trim();el.value="";return v;}
+
 async function handleText(text){
   text=text.trim(); if(!text)return;
-  try{const ref=await saveJSON(/^https?:\\/\\//i.test(text)||/^[\\w-]+\\.[a-z]{2,}/i.test(text)?{url:text}:{text});
-    toast("Saved → "+ref.category,"ok");prepend(ref);}catch(e){toast("Failed: "+e.message,"bad");}
+  const note=takeNote();
+  const isUrl=/^https?:\\/\\//i.test(text)||/^[\\w-]+\\.[a-z]{2,}/i.test(text);
+  try{
+    const d=await saveJSON(isUrl?{url:text,note}:{text,note});
+    toast("Saved → "+d.ref.category,"ok");prepend(d.ref);echo(d.similar);
+  }catch(e){toast("Failed: "+e.message,"bad");}
 }
 async function handleFiles(files){
-  for(const f of files){try{const ref=await saveBlob(f);toast("Saved → "+ref.category,"ok");prepend(ref);}catch(e){toast("Failed: "+e.message,"bad");}}
+  const note=takeNote();
+  for(const f of files){
+    try{const d=await saveBlob(f,note);toast("Saved → "+d.ref.category,"ok");prepend(d.ref);echo(d.similar);}
+    catch(e){toast("Failed: "+e.message,"bad");}
+  }
 }
+
+// ---- "you've saved things like this before" ----
+function echo(similar){
+  const box=$("#echo");
+  if(!similar||!similar.length){box.classList.add("hide");return;}
+  $("#echotitle").textContent="You've saved "+similar.length+" thing"+(similar.length>1?"s":"")+" like this";
+  const items=$("#echoitems");items.innerHTML="";
+  similar.forEach(s=>{
+    const a=document.createElement("a");a.className="tile";
+    a.href=s.url||("/browse#"+s.id);a.target=s.url?"_blank":"_self";
+    a.innerHTML='<span class="badge">'+s.category+'</span>'+
+      (s.image?'<img loading="lazy" src="'+s.image+'">':'<span class="ph">'+(s.title||s.category)+'</span>');
+    items.appendChild(a);
+  });
+  box.classList.remove("hide");
+}
+$("#echoclose").onclick=()=>$("#echo").classList.add("hide");
 
 // ---- recent strip ----
 function tile(ref){
@@ -165,7 +206,7 @@ $("#file").onchange=e=>{handleFiles([...e.target.files]);e.target.value="";};
 $("#add").onclick=()=>{const v=$("#urlin").value;$("#urlin").value="";handleText(v);};
 $("#urlin").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();const v=e.target.value;e.target.value="";handleText(v);}});
 window.addEventListener("paste",e=>{
-  if(document.activeElement===$("#urlin")||document.activeElement===$("#tok"))return;
+  if(document.activeElement===$("#urlin")||document.activeElement===$("#tok")||document.activeElement===$("#note"))return;
   const items=[...(e.clipboardData?.items||[])];
   const imgs=items.filter(i=>i.type.startsWith("image/")).map(i=>i.getAsFile()).filter(Boolean);
   if(imgs.length){e.preventDefault();return handleFiles(imgs);}

@@ -22,6 +22,34 @@ id = "REPLACE_WITH_KV_ID"
 # binding = "REFS_R2"
 # bucket_name = "save-ref-blobs"
 
+# ---------------------------------------------------------------- the brain
+# Workers AI runs the embedding, vision-caption and fast-answer models inside
+# the Worker. No resource to create and no key — just the binding.
+[ai]
+binding = "AI"
+
+# Vectorize stores the embeddings. Create BOTH indexes once before deploying,
+# or `wrangler deploy` will fail saying the index doesn't exist:
+#   npx wrangler vectorize create bigbrain-refs      --dimensions=768 --metric=cosine
+#   npx wrangler vectorize create bigbrain-inventory --dimensions=768 --metric=cosine
+# (768 is the output size of @cf/baai/bge-base-en-v1.5 — see src/embed.js.)
+[[vectorize]]
+binding = "VECTORS"
+index_name = "bigbrain-refs"
+
+# rent.co inventory, so Big Brain can answer "do I have anything like this?".
+# Populate it with: node scripts/index-inventory.mjs  (from the repo root)
+[[vectorize]]
+binding = "INV_VECTORS"
+index_name = "bigbrain-inventory"
+
+# OPTIONAL — the "deep" tier. Without it, /api/ask?deep=1 quietly falls back to
+# the fast Workers AI model, so the worker is fine to run without one.
+#   npx wrangler secret put ANTHROPIC_API_KEY
+# Override the model (default claude-sonnet-5) with a plain var if you want:
+# [vars]
+# ANTHROPIC_MODEL = "claude-sonnet-5"
+
 # AUTH_TOKEN is a secret, never committed. Set it with:
 #   openssl rand -hex 32           # copy the output -> this is your Big Brain token
 #   npx wrangler secret put AUTH_TOKEN

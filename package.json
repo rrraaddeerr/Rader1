@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "import-inventory": "node scripts/import-inventory.mjs",
-    "import-vpc": "node scripts/import-vpc.mjs"
+    "import-vpc": "node scripts/import-vpc.mjs",
+    "index-inventory": "node scripts/index-inventory.mjs"
   },
   "dependencies": {
     "next": "^15.0.0",
