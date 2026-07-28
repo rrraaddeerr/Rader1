@@ -202,6 +202,30 @@ const rows = refsPath.endsWith(".json")
 
 console.log(`${rows.length} refs from ${basename(refsPath)}`);
 
+if (!rows.length) {
+  console.error("\nThat file has no rows. If it came from Notion, re-export with every property shown.");
+  process.exit(1);
+}
+
+// Notion's CSV only contains the properties VISIBLE in the view you exported
+// from. Losing `Type` costs the free realm lookup, so say so loudly rather
+// than silently producing weaker proposals.
+const columns = new Set(Object.keys(rows[0]));
+const wanted = ["Name", "URL", "Type", "Source App", "Notes"];
+const missing = wanted.filter((c) => !columns.has(c));
+if (missing.length) {
+  console.warn(`\n⚠ Missing column(s): ${missing.join(", ")}`);
+  console.warn(`  Found: ${[...columns].join(", ")}`);
+  if (missing.includes("URL")) {
+    console.error("  Without URL nothing can be matched. Re-export with the URL property visible.");
+    process.exit(1);
+  }
+  if (missing.includes("Type")) {
+    console.warn("  Without Type the free realm lookup is skipped; handles still recover titles.");
+  }
+  console.warn("");
+}
+
 const proposals = [];
 const stats = { matched: 0, unmatched: 0, notInstagram: 0, alreadyTitled: 0, followedOnly: 0 };
 
