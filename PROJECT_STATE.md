@@ -169,17 +169,19 @@ answer from. New refs are searchable instantly; deleted refs are forgotten.
 ### The Archivist (staged enrichment)
 
 The real archive lives in **Notion** (🧠 Big Brain, `59aa4929-…`, 1,570 rows),
-not in the worker's KV — the worker is the brain layer over it. 1,216 of those
-rows are titled literally "Instagram" with no notes or tags, which is the
-actual reason search doesn't filter well.
+not in the worker's KV — the worker is the brain layer over it. 1,241 refs come
+from Instagram and 1,158 of those already carry caption text as a title; only
+83 are titled literally "Instagram". So the archive has plenty of text to
+embed. What it lacks is **who posted it** and **what kind of thing it is**.
 
 - **Realms** — `INSPO` / `KNOWLEDGE` / `CULTURE+NEWS` / `SELF` as a first-class
-  facet. Notion's `Type` is populated on every row, so realm is a free lookup.
+  facet. Notion's `Type` is populated on every row, so realm is a free lookup:
+  verified across the whole database as 1,258 / 236 / 76, nothing unclassified.
   `SELF` is never inferred.
 - **The IG join** (`scripts/ig-join.mjs`) — the Instagram export maps every
   saved post to the account that made it; `TASTE_SOURCES.md` maps accounts to
-  the 8 taste axes. Joining them names and classifies the nameless refs at
-  Tier 0: offline, no scraping, no vision, no spend.
+  the 8 taste axes. Adds author attribution to all 1,241 Instagram refs and a
+  title to the 83 without one. Tier 0: offline, no scraping, no spend.
 - **Swipe queue** (`/queue`) — agents propose, you decide. Nothing auto-adds a
   ref; approving does not write to Notion, it marks ready for an explicit push.
 - **Cost governor** (`src/budget.js`) — $5/night ceiling, vision rationed to

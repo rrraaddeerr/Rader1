@@ -94,7 +94,7 @@ ok("SELF is never inferred", ![
   classify({ type: "Design Reference", handle: "welcome.jpeg" }),
 ].some((r) => r.realm === "SELF"));
 
-// The 1,216-row problem: no title, no notes, no handle = low confidence.
+// The 83 nameless rows: no title, no notes, no handle = low confidence.
 const bare = classify({ type: "Design Reference", name: "Instagram", url: "https://www.instagram.com/p/XYZ/" });
 ok("a bare Instagram row is low confidence", bare.confidence <= 0.35);
 ok("and it is flagged for help", bare.needsHelp);

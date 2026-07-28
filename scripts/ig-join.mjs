@@ -2,12 +2,16 @@
 /**
  * Tier 0 — give the nameless Instagram refs an identity, for free.
  *
- * 1,216 of the 1,570 rows in 🧠 Big Brain are titled literally "Instagram",
- * with no notes and no tags. Nothing can search that. But the Instagram data
- * export knows which account every saved post came from, and TASTE_SOURCES.md
- * knows what each account means. Joining the two recovers a real title, a
- * realm and a taste axis for every matched ref — no scraping, no vision, no
- * API calls, no cost. Deterministic code on an idle machine.
+ * Of the 1,570 rows in 🧠 Big Brain, 1,241 come from Instagram. Most already
+ * carry caption text as a title; 83 are titled literally "Instagram". But a
+ * caption only tells you what a post *said* — never which account posted it,
+ * and that is the single most useful fact about a saved reference.
+ *
+ * The Instagram data export knows the account behind every saved post, and
+ * TASTE_SOURCES.md knows what each account means. Joining the two adds author
+ * attribution and a taste axis to all 1,241, and a real title to the 83 —
+ * no scraping, no vision, no API calls, no cost. Deterministic code on an
+ * idle machine.
  *
  * It writes PROPOSALS ONLY. Nothing here touches Notion and nothing is
  * applied: curation is yours. Output goes to the swipe queue for approval.

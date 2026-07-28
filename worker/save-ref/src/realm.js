@@ -234,7 +234,7 @@ export function classify(ref = {}) {
 /**
  * Build a display title for a ref that Notion only knows as "Instagram".
  * Uses whatever identity we recovered; falls back to the shortcode so at
- * minimum the rows stop being 1,216 identical strings.
+ * minimum the 83 nameless rows stop being identical strings.
  */
 export function titleFor(ref = {}, handle = "") {
   const name = String(ref.name || ref.Name || "").trim();

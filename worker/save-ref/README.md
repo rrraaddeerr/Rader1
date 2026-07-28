@@ -62,10 +62,25 @@ instant.
 
 ## The Archivist — realms, the swipe queue, and the cost governor
 
-The stated goal is *"when I search in Big Brain, it filters better."* The thing
-standing in the way is that **1,216 of the 1,570 refs in Notion are titled
-literally "Instagram"**, with no notes and no tags. No embedding fixes a row
-whose entire content is the word "Instagram".
+The stated goal is *"when I search in Big Brain, it filters better."*
+
+Measured against the live database (1,570 refs):
+
+| | count |
+|---|---|
+| refs total | 1,570 |
+| captured from Instagram | 1,241 |
+| …of those, already carrying caption text as a title | **1,158** |
+| titled literally "Instagram" | **83** |
+| rows with no tags | 445 |
+
+So the archive is in better shape than a glance at the newest rows suggests —
+recent captures lost their titles, older ones didn't. Most refs have real text,
+which is exactly what embeddings need.
+
+What's genuinely missing is **who** and **what kind**. A caption tells you what
+a post said, never which account posted it, and nothing in the schema says
+whether a ref is reference, education or scene intel.
 
 ### Realms
 
@@ -81,13 +96,16 @@ A top-level facet, above tags:
 `SELF` is **never inferred** — nothing can tell what's personal to you, so it
 only ever comes from your own hand.
 
+Realm classification is **free and complete**: `Type` is populated on all 1,570
+rows, so a lookup table with no model call sorts the entire database —
+1,258 INSPO, 236 CULTURE+NEWS, 76 KNOWLEDGE, nothing unclassified.
+
 ### The join that costs nothing
 
-Notion's `Type` is populated on all 1,570 rows, so realm falls out of a lookup
-table with no model call. And the Instagram export knows the account behind
-every saved post, while `TASTE_SOURCES.md` knows what each account *means*.
-Joining them recovers a title, a realm and a taste axis for every matched ref —
-offline, no scraping, no vision, no spend:
+The Instagram export knows the account behind every saved post, and
+`TASTE_SOURCES.md` knows what each account *means*. Joining them adds author
+attribution and a taste axis to all 1,241 Instagram refs, and recovers a title
+for the 83 that never got one — offline, no scraping, no vision, no spend:
 
 ```bash
 node scripts/ig-join.mjs \
