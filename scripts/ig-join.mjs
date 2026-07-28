@@ -140,14 +140,33 @@ let tempDir = null;
 const info = await stat(igRoot).catch(() => null);
 if (!info) { console.error(`Not found: ${igRoot}`); process.exit(1); }
 
+/** The only three files we need out of a multi-gigabyte export. */
+const WANTED_FILES = ["saved_posts.json", "following.json", "saved_collections.json"];
+
 if (info.isFile()) {
   tempDir = await mkdtemp(join(tmpdir(), "ig-export-"));
-  console.log(`Unzipping ${basename(igRoot)} …`);
+  const sizeGb = info.size / 1e9;
+  console.log(
+    `Reading ${basename(igRoot)} (${sizeGb.toFixed(1)} GB) — extracting 3 JSON files, not the media …`
+  );
+  // Targeted extraction. A full export is mostly photos and videos we have no
+  // use for; pulling them all costs minutes and gigabytes of temp disk.
   try {
-    await run("unzip", ["-qq", "-o", igRoot, "-d", tempDir]);
-  } catch (err) {
-    console.error(`Couldn't unzip: ${err.message}`);
-    process.exit(1);
+    await run("unzip", ["-qq", "-o", igRoot, ...WANTED_FILES.map((f) => `*${f}`), "-d", tempDir], {
+      maxBuffer: 1024 * 1024 * 32,
+    });
+  } catch {
+    // unzip exits non-zero when nothing matched — fall through and check.
+  }
+
+  if (!(await findFile(tempDir, "saved_posts.json"))) {
+    console.log("  (paths differ in this export vintage — falling back to a full extract, slower)");
+    try {
+      await run("unzip", ["-qq", "-o", igRoot, "-d", tempDir], { maxBuffer: 1024 * 1024 * 32 });
+    } catch (err) {
+      console.error(`Couldn't unzip: ${err.message}`);
+      process.exit(1);
+    }
   }
   igRoot = tempDir;
 }
