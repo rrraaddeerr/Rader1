@@ -93,30 +93,22 @@ if (envAccount && loginAccount && envAccount !== loginAccount) {
   fixes.push(`grep -rn CLOUDFLARE_ACCOUNT_ID ~/.zshrc ~/.zprofile ~/.bash_profile 2>/dev/null`);
 }
 
-// ------------------------------------------------------- 4. the missing scope
-if (scopes.length) {
-  const hasVectorize = scopes.some((s) => s.startsWith("vectorize"));
-  if (hasVectorize) {
-    console.log(ok("Your token has the vectorize scope"));
-  } else {
-    console.log(bad("Your token has NO vectorize scope"));
-    console.log(dim(`   ${scopes.length} scopes present, none of them vectorize.`));
-    console.log(dim("   Tokens issued before Vectorize existed can't create an index."));
-    problems.push("missing vectorize scope");
-    fixes.push("npx wrangler logout && npx wrangler login");
-  }
-  console.log(dim(`   (ai: ${scopes.includes("ai") ? "yes" : "no"}, workers: ${scopes.some((s) => s.startsWith("workers")) ? "yes" : "no"})`));
-}
+// The scope list is a hint, not the authority. wrangler doesn't always name a
+// scope "vectorize", so absence proves nothing — an actual API call does.
+// Verdict is deferred until after the live check below.
+const hasVectorizeScope = scopes.length ? scopes.some((s) => s.startsWith("vectorize")) : null;
 
-// ------------------------------------------------------------ 5. the indexes
+// ------------------------------------------------------------ 4. the indexes
 const WANT = ["bigbrain-refs", "bigbrain-inventory"];
 let existing = [];
+let vectorizeWorks = false;
 try {
   const { stdout } = await run("npx", ["wrangler", "vectorize", "list"], {
     maxBuffer: 1024 * 1024 * 8,
     timeout: 90_000,
   });
   existing = WANT.filter((n) => stdout.includes(n));
+  vectorizeWorks = true;
   console.log(ok("`wrangler vectorize list` works — the API accepts your credentials"));
   for (const n of WANT) {
     console.log(existing.includes(n) ? ok(`  index ${n} exists`) : warn(`  index ${n} is missing`));
@@ -144,6 +136,20 @@ try {
     for (const l of signal) console.log(dim(`   ${l}`));
     problems.push("vectorize list failed");
   }
+}
+
+// ------------------------------------------------- 5. the scope verdict
+// Only meaningful now that we know whether the API actually answers.
+if (hasVectorizeScope === true) {
+  console.log(ok("Your token lists the vectorize scope"));
+} else if (hasVectorizeScope === false && vectorizeWorks) {
+  console.log(warn("No scope literally named 'vectorize' in the token"));
+  console.log(dim("   Ignore it — the API answered, so access is real. wrangler"));
+  console.log(dim("   doesn't name every scope, and a working call outranks the list."));
+} else if (hasVectorizeScope === false) {
+  console.log(bad("No vectorize scope, and the vectorize API rejected the call"));
+  problems.push("missing vectorize scope");
+  fixes.push("npx wrangler logout && npx wrangler login");
 }
 
 // -------------------------------------------------------- 6. the config file
