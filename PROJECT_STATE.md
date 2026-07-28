@@ -166,6 +166,30 @@ answer from. New refs are searchable instantly; deleted refs are forgotten.
   from a brief (hallucinated item ids are filtered out server-side).
 - **Feeds future-outfit** — `GET /api/profile` returns a cached taste
   fingerprint (palette / materials / silhouettes / eras / keywords).
+### The Archivist (staged enrichment)
+
+The real archive lives in **Notion** (🧠 Big Brain, `59aa4929-…`, 1,570 rows),
+not in the worker's KV — the worker is the brain layer over it. 1,216 of those
+rows are titled literally "Instagram" with no notes or tags, which is the
+actual reason search doesn't filter well.
+
+- **Realms** — `INSPO` / `KNOWLEDGE` / `CULTURE+NEWS` / `SELF` as a first-class
+  facet. Notion's `Type` is populated on every row, so realm is a free lookup.
+  `SELF` is never inferred.
+- **The IG join** (`scripts/ig-join.mjs`) — the Instagram export maps every
+  saved post to the account that made it; `TASTE_SOURCES.md` maps accounts to
+  the 8 taste axes. Joining them names and classifies the nameless refs at
+  Tier 0: offline, no scraping, no vision, no spend.
+- **Swipe queue** (`/queue`) — agents propose, you decide. Nothing auto-adds a
+  ref; approving does not write to Notion, it marks ready for an explicit push.
+- **Cost governor** (`src/budget.js`) — $5/night ceiling, vision rationed to
+  20/night, tier ladder 0→3. Runaway jobs are refused, not invoiced.
+
+Related live infrastructure (do not duplicate): **The Prospector** nightly
+sweep, trigger `trig_01TNy7JTCotMsQBWrAErcLK1`, delivering to the ⛏️ PROSPECTOR
+Notion page. `claude.ai/code` is disabled on this account — Notion is the
+mailbox.
+
 - **Setup:** two Vectorize indexes must be created before `wrangler deploy`,
   then backfill with `POST /api/reindex?deep=1` and load inventory with
   `node scripts/index-inventory.mjs`. Full steps in

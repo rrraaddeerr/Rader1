@@ -54,9 +54,13 @@ import {
 } from "./embed.js";
 import { askBrain, hydrate, sourceOf, vibeProfile } from "./ask.js";
 import { matchArchive, draftSet } from "./rentco.js";
+import { classify, titleFor, summarize, REALMS } from "./realm.js";
+import * as queue from "./stage.js";
+import { quote, ledger } from "./budget.js";
 import { DROP_HTML } from "./pages/drop.js";
 import { BROWSE_HTML } from "./pages/browse.js";
 import { SHORTCUTS_HTML } from "./pages/shortcuts.js";
+import { QUEUE_HTML } from "./pages/queue.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -176,6 +180,7 @@ export default {
       if (path === "/drop" && request.method === "GET") return html(DROP_HTML);
       if (path === "/browse" && request.method === "GET") return html(BROWSE_HTML);
       if (path === "/shortcuts" && request.method === "GET") return html(SHORTCUTS_HTML);
+      if (path === "/queue" && request.method === "GET") return html(QUEUE_HTML);
       if (path === "/health") {
         return json({
           ok: true,
@@ -287,6 +292,108 @@ export default {
         return json({ ok: true, imported: n });
       }
 
+      // ---- the swipe queue ----------------------------------------------
+      // Agents propose; you decide. Nothing here applies a change on its own.
+
+      // POST /api/queue/propose — mining jobs drop their proposals here
+      if (path === "/api/queue/propose" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const proposals = Array.isArray(body) ? body : body.proposals;
+        if (!Array.isArray(proposals)) return json({ ok: false, error: "Expected proposals[]" }, 400);
+        const out = await queue.propose(env, {
+          kind: body.kind || "realm",
+          source: body.source || "agent",
+          proposals,
+        });
+        return json({ ok: true, ...out });
+      }
+
+      // GET /api/queue/stats — counts for the header and the morning brief
+      if (path === "/api/queue/stats" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        return json({ ok: true, counts: await queue.stats(env) });
+      }
+
+      // GET /api/queue/export — approved and not yet pushed anywhere
+      if (path === "/api/queue/export" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const items = await queue.approved(env, { limit: clamp(url.searchParams.get("limit"), 500, 1000) });
+        return json({ ok: true, items, count: items.length });
+      }
+
+      // POST /api/queue/applied — mark exported items as pushed
+      if (path === "/api/queue/applied" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const ids = Array.isArray(body) ? body : body.ids;
+        if (!Array.isArray(ids)) return json({ ok: false, error: "Expected ids[]" }, 400);
+        return json({ ok: true, marked: await queue.markApplied(env, ids) });
+      }
+
+      // GET /api/queue — the swipe feed
+      if (path === "/api/queue" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await queue.list(env, {
+          status: url.searchParams.get("status") || "pending",
+          kind: url.searchParams.get("kind") || "",
+          limit: clamp(url.searchParams.get("limit"), 40, 100),
+          cursor: url.searchParams.get("cursor") || undefined,
+        });
+        return json({ ok: true, ...out });
+      }
+
+      // POST /api/queue/:id — approve / reject / skip / reopen
+      if (path.startsWith("/api/queue/") && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const id = decodeURIComponent(path.slice("/api/queue/".length));
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await queue.decide(env, id, { action: body.action, edits: body.edits });
+        return json(out, out.ok ? 200 : 400);
+      }
+
+      // POST /api/classify — Tier 0 realm classification, free, no model call
+      if (path === "/api/classify" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const refs = Array.isArray(body) ? body : body.refs;
+        if (!Array.isArray(refs)) return json({ ok: false, error: "Expected refs[]" }, 400);
+        const results = refs.map((r) => ({
+          url: r.url || r["userDefined:URL"] || "",
+          currentTitle: r.name || r.Name || "",
+          proposedTitle: titleFor(r, r.handle || ""),
+          handle: r.handle || "",
+          ...classify(r),
+        }));
+        return json({ ok: true, realms: REALMS, summary: summarize(results), results });
+      }
+
+      // GET /api/budget — what tonight has cost so far, and what still fits
+      if (path === "/api/budget" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        // tier 0 is a legitimate value, so it can't go through clamp()'s
+        // "0 means unset" rule.
+        const t = parseInt(url.searchParams.get("tier") ?? "3", 10);
+        const tier = Number.isFinite(t) && t >= 0 && t <= 3 ? t : 3;
+        return json({
+          ok: true,
+          ledger: await ledger(env),
+          quote: await quote(env, {
+            tier,
+            units: clamp(url.searchParams.get("units"), 1, 100000),
+            vision: truthy(url.searchParams.get("vision")),
+          }),
+        });
+      }
+
       // ---- the brain ----------------------------------------------------
 
       // POST /api/search {q, limit, cat} — semantic search
@@ -298,7 +405,11 @@ export default {
         const q = String(body.q || "").trim();
         if (!q) return json({ ok: false, error: "Missing q" }, 400);
         const limit = clamp(body.limit, 20, 100);
-        const matches = await searchRefs(env, q, { topK: limit, category: body.cat || "" });
+        const matches = await searchRefs(env, q, {
+          topK: limit,
+          category: body.cat || "",
+          realm: body.realm || "",
+        });
         const refs = await hydrate(env, matches);
         return json({ ok: true, refs, count: refs.length });
       }

@@ -60,6 +60,80 @@ instant.
 - **deep** (`deep: true`) — Claude, for synthesis and taste work where voice
   matters. Falls back to cheap automatically if no API key is set.
 
+## The Archivist — realms, the swipe queue, and the cost governor
+
+The stated goal is *"when I search in Big Brain, it filters better."* The thing
+standing in the way is that **1,216 of the 1,570 refs in Notion are titled
+literally "Instagram"**, with no notes and no tags. No embedding fixes a row
+whose entire content is the word "Instagram".
+
+### Realms
+
+A top-level facet, above tags:
+
+| realm | what lands there |
+|---|---|
+| `INSPO` | aesthetic reference — the classic Big Brain |
+| `KNOWLEDGE` | education, technique, how things work |
+| `CULTURE+NEWS` | cultural moves, news, scene intel |
+| `SELF` | personal / self-help |
+
+`SELF` is **never inferred** — nothing can tell what's personal to you, so it
+only ever comes from your own hand.
+
+### The join that costs nothing
+
+Notion's `Type` is populated on all 1,570 rows, so realm falls out of a lookup
+table with no model call. And the Instagram export knows the account behind
+every saved post, while `TASTE_SOURCES.md` knows what each account *means*.
+Joining them recovers a title, a realm and a taste axis for every matched ref —
+offline, no scraping, no vision, no spend:
+
+```bash
+node scripts/ig-join.mjs \
+  --ig ~/Downloads/instagram-raderturner-2026-04-22-HHJhrRl9.zip \
+  --refs ~/Downloads/big-brain.csv \
+  --out ~/Dropbox/_PROSPECTOR/proposals-realm.json
+```
+
+`--refs` is Notion's CSV export of 🧠 Big Brain (••• → Export → CSV). Add
+`--push` to send the proposals straight into the swipe queue.
+
+A row that was `Instagram` becomes `@welcome.jpeg · DbJsAVTkQGk`, realm
+`INSPO`, axis `weird-beautiful-objects`, confidence `0.9`, reason
+*"Type=Design Reference · curator @welcome.jpeg"*. A row with no match stays
+honestly at `0.35` and gets flagged for your eyes.
+
+### The swipe queue
+
+**Agents propose. You decide.** Nothing auto-adds a reference, and nothing
+applies a taste judgment on its own — curation is the craft. Proposals land in
+`/queue`: one card at a time, phone-first, swipe right to approve, left to
+reject, down to skip, or tap a realm chip to correct it before approving.
+Arrow keys do the same at a laptop.
+
+Approving does **not** write to Notion. It marks the item ready; pushing
+approved changes anywhere is always a separate, explicit act
+(`GET /api/queue/export`).
+
+### The cost governor
+
+Standing rule: no heavy background burns without a same-moment OK, ceiling
+about **$5/night**. Spend is metered in `src/budget.js` rather than trusted to
+calling code — a job that wants 1,200 vision calls gets **refused**, not
+invoiced. Vision is rationed by count (20/night) as well as by cost.
+
+The tier ladder, always climbed from the bottom:
+
+| tier | what | cost |
+|---|---|---|
+| 0 | deterministic code on the Worker (rules, joins, diffing) | free |
+| 1 | local models on the Mac via Ollama | free |
+| 2 | Workers AI / Haiku — per-item classify, embed | cents |
+| 3 | frontier Claude — judgment, ranking, voice only | metered |
+
+`GET /api/budget` shows what tonight has cost and what still fits.
+
 ## Endpoints
 
 | Method | Path | Auth | Purpose |
@@ -67,6 +141,14 @@ instant.
 | GET | `/drop` | public page | the drop SPA |
 | GET | `/browse` | public page | the gallery SPA + Ask box |
 | GET | `/shortcuts` | public page | iPhone setup guide (share sheet, Back Tap, Siri) |
+| GET | `/queue` | public page | the swipe feed — approve/reject agent proposals |
+| **POST** | **`/api/queue/propose`** | token | mining jobs drop proposals here |
+| **GET** | **`/api/queue`** | token | the pending feed |
+| **POST** | **`/api/queue/:id`** | token | `{action: approve\|reject\|skip\|reopen, edits}` |
+| **GET** | **`/api/queue/stats`** | token | counts for the header and the brief |
+| **GET** | **`/api/queue/export`** | token | approved, not yet pushed |
+| **POST** | **`/api/classify`** | token | Tier-0 realm classification, no model call |
+| **GET** | **`/api/budget`** | token | tonight's ledger + what still fits |
 | POST | `/save?similar=1` | token | save a link/note (JSON, with `note`) or file (raw bytes, `X-Note`) |
 | GET | `/api/list?q=&cat=&cursor=&limit=` | token | list / keyword search / filter |
 | GET | `/api/ref/:id` | token | fetch one ref |

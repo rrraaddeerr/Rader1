@@ -92,6 +92,7 @@ export const DROP_HTML = /* html */ `<!doctype html>
 
   <div class="links">
     <a href="/browse">Gallery</a>
+    <a href="/queue">Queue</a>
     <a href="/shortcuts">iPhone setup</a>
     <a href="#" id="logout">Reset token</a>
   </div>

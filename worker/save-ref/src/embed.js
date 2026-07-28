@@ -37,6 +37,8 @@ export function embedTextFor(ref) {
     ref.desc,
     ref.text,                           // typed notes — your own voice
     Array.isArray(ref.tags) && ref.tags.length ? `Tags: ${ref.tags.join(", ")}` : "",
+    ref.realm ? `Realm: ${ref.realm}` : "",
+    ref.axis ? `Taste axis: ${ref.axis}` : "",
     ref.category ? `Category: ${ref.category}` : "",
     ref.host ? `Source: ${ref.host}` : "",
     ref.body,                           // page text / transcript
@@ -111,6 +113,7 @@ export async function indexRef(env, ref) {
         values: vector,
         metadata: {
           category: ref.category || "link",
+          realm: ref.realm || "",
           title: String(ref.title || ref.host || "").slice(0, META_TITLE_MAX),
           host: ref.host || "",
           createdAt: ref.createdAt || "",
@@ -139,24 +142,31 @@ export async function unindexRef(env, id) {
  * Nearest refs to a query string.
  * @returns {Promise<Array<{id:string, score:number, metadata:object}>>}
  */
-export async function searchRefs(env, query, { topK = 12, category = "" } = {}) {
+export async function searchRefs(env, query, { topK = 12, category = "", realm = "" } = {}) {
   const vector = await embedOne(env, query);
   if (!vector) return [];
-  return searchRefsByVector(env, vector, { topK, category });
+  return searchRefsByVector(env, vector, { topK, category, realm });
 }
 
 /** Nearest refs to an existing vector (used by /api/similar). */
-export async function searchRefsByVector(env, vector, { topK = 12, category = "", exclude = "" } = {}) {
+export async function searchRefsByVector(
+  env,
+  vector,
+  { topK = 12, category = "", realm = "", exclude = "" } = {}
+) {
   if (!brainReady(env) || !vector) return [];
   try {
-    // Over-fetch so post-filtering by category still returns a full page.
+    // Over-fetch so post-filtering still returns a full page. Filtering in JS
+    // rather than via Vectorize metadata indexes keeps setup to one command.
+    const narrowing = category || realm;
     const res = await env.VECTORS.query(vector, {
-      topK: Math.min(category ? topK * 4 : topK + (exclude ? 1 : 0), 100),
+      topK: Math.min(narrowing ? topK * 4 : topK + (exclude ? 1 : 0), 100),
       returnMetadata: "all",
     });
     let matches = res?.matches || [];
     if (exclude) matches = matches.filter((m) => m.id !== exclude);
     if (category) matches = matches.filter((m) => m.metadata?.category === category);
+    if (realm) matches = matches.filter((m) => m.metadata?.realm === realm);
     return matches.slice(0, topK).map((m) => ({
       id: m.id,
       score: typeof m.score === "number" ? m.score : 0,
