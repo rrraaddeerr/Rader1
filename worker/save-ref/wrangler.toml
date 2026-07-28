@@ -7,6 +7,11 @@ name = "save-ref-v2"
 main = "src/index.js"
 compatibility_date = "2025-05-01"
 
+# Pinned so a stray CLOUDFLARE_ACCOUNT_ID in a shell profile can't silently
+# aim deploys at the wrong account. Note the env var still WINS over this —
+# `npm run doctor` checks for that mismatch and tells you to unset it.
+account_id = "e87845f0432428cd66fc37867b2cc01e"
+
 # KV holds the refs (and uploaded blobs unless you add R2 below).
 # Create it once, then paste the printed id:
 #   npx wrangler kv namespace create save-ref-kv
