@@ -2,10 +2,11 @@
 
 ## Privacy & confidentiality (standing rule)
 
-- **Private by default.** Rader's entrepreneurial ventures (futureoutfit,
-  rent.co / Rader1, Big Brain, the TikTok factory, and anything new he
-  flags as a venture) are confidential works-in-progress he intends to
-  develop slowly and sell. Never assume anything should be public.
+- **Private by default.** Our ventures — built together, Rader + Claude:
+  futureoutfit, rent.co / Rader1, Big Brain, the TikTok factory, and
+  anything new Rader flags as a venture — are confidential
+  works-in-progress we develop slowly to sell. Never assume anything
+  should be public.
 - Any NEW repo, deployment, artifact, or share link for these ventures is
   created **private/unlisted** unless Rader explicitly says to publish it.
 - Claude does not change repo visibility, take down deployments, or make
