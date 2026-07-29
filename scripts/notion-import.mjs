@@ -161,25 +161,43 @@ async function csvPathFrom(input) {
     process.exit(1);
   }
 
-  // Unpack any nested archives (ExportBlock-*.zip), one level is enough.
-  for (const entry of await readdir(dir)) {
-    if (entry.toLowerCase().endsWith(".zip")) {
-      await run("unzip", ["-qq", "-o", join(dir, entry), "-d", join(dir, "inner")]).catch(() => {});
-    }
-  }
-
-  const found = [];
+  const everything = [];
   const walk = async (d) => {
     for (const e of await readdir(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) await walk(p);
-      else if (e.name.toLowerCase().endsWith(".csv")) found.push(p);
+      else everything.push(p);
     }
   };
+
+  // Notion nests archives (ExportBlock-*.zip), sometimes more than one level.
+  // Unpack repeatedly rather than assuming a depth, and say so when one fails
+  // instead of swallowing it — a silent failure here looks like "no CSV".
+  const unpacked = new Set();
+  for (let pass = 0; pass < 3; pass++) {
+    everything.length = 0;
+    await walk(dir);
+    const zips = everything.filter((p) => /\.zip$/i.test(p) && !unpacked.has(p));
+    if (!zips.length) break;
+    for (const z of zips) {
+      unpacked.add(z);
+      try {
+        await run("unzip", ["-qq", "-o", z, "-d", `${z}-unpacked`]);
+      } catch (err) {
+        console.error(`  couldn't unpack ${basename(z)}: ${String(err.stderr || err.message).split("\n")[0]}`);
+      }
+    }
+  }
+
+  everything.length = 0;
   await walk(dir);
+  const found = everything.filter((p) => p.toLowerCase().endsWith(".csv"));
 
   if (!found.length) {
-    console.error("No CSV inside that zip. Re-export from Notion with format CSV.");
+    console.error("\nNo CSV inside that zip. Here's what is in it:\n");
+    for (const p of everything.slice(0, 15)) console.error(`  ${p.slice(dir.length + 1)}`);
+    if (everything.length > 15) console.error(`  … and ${everything.length - 15} more`);
+    console.error("\nRe-export from Notion with Export format = CSV (not Markdown only).\n");
     process.exit(1);
   }
   // "_all.csv" is every row; the other is just the current view.
