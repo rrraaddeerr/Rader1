@@ -121,6 +121,27 @@ function categoryFor(url, sourceApp) {
  * its name.
  */
 async function csvPathFrom(input) {
+  const { stat, readdir: readDir } = await import("node:fs/promises");
+
+  // Check it exists before doing anything, so a wrong path is one clear line
+  // rather than an unzip stack trace.
+  if (!(await stat(input).catch(() => null))) {
+    console.error(`\nNot found: ${input}\n`);
+    const downloads = `${process.env.HOME}/Downloads`;
+    const candidates = (await readDir(downloads).catch(() => []))
+      .filter((f) => /\.(zip|csv)$/i.test(f))
+      .slice(0, 12);
+    if (candidates.length) {
+      console.error("Exports in your Downloads folder:\n");
+      for (const c of candidates) console.error(`  ~/Downloads/${c}`);
+      console.error("\nTip: type `--refs ` then DRAG the file from Finder into Terminal.\n");
+    } else {
+      console.error("No .zip or .csv in ~/Downloads. Export from Notion first:");
+      console.error("  🧠 Big Brain → ••• → Export → format CSV\n");
+    }
+    process.exit(1);
+  }
+
   if (!input.toLowerCase().endsWith(".zip")) return input;
 
   const { execFile } = await import("node:child_process");
@@ -132,7 +153,13 @@ async function csvPathFrom(input) {
 
   const dir = await mkdtemp(join(tmpdir(), "notion-export-"));
   console.log(`Unpacking ${basename(input)} …`);
-  await run("unzip", ["-qq", "-o", input, "-d", dir]);
+  try {
+    await run("unzip", ["-qq", "-o", input, "-d", dir]);
+  } catch (err) {
+    console.error(`\nCouldn't unpack that file — is it really a zip?`);
+    console.error(`  ${String(err.stderr || err.message).split("\n")[0]}\n`);
+    process.exit(1);
+  }
 
   // Unpack any nested archives (ExportBlock-*.zip), one level is enough.
   for (const entry of await readdir(dir)) {
