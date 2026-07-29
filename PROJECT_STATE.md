@@ -154,9 +154,22 @@ respond Approve / Maybe / Pass per item. Real-time tally back to operator.
 - **Both tiers on:** Workers AI for search and quick answers, Claude via
   `ANTHROPIC_API_KEY` for synthesis. The gap between them is large enough to
   matter — the cheap model lists, Claude reads.
-- **Still to do:** `npm run index-inventory` (590 rent.co items, for
-  "do I have anything like this?"), and the IG join, which needs a *fresh*
-  Instagram export — the April one predates most of the archive.
+- **Inventory indexed:** 590 rent.co items. `/api/match` and `/api/set-draft`
+  are live — drop a description or an image, get ranked items you own.
+- **Still to do:** the IG join, which needs a *fresh* Instagram export — the
+  April one predates most of the archive, and the zip in Downloads is a
+  Markdown-only export with no CSV in it.
+
+### Gotchas worth remembering
+
+- **Vectorize rejects `topK > 20` when `returnMetadata: "all"`.** It refuses
+  rather than truncating, so over-fetching to filter in JS returns *nothing*.
+  Cost an hour; see `METADATA_TOPK_MAX` in `src/embed.js`.
+- **`catch { return [] }` is how this codebase lies to you.** A rejected query
+  and an honest no-match looked identical three separate times. Failures now
+  surface a `debug` field instead.
+- **Workers AI chat model ids move.** `src/ask.js` tries a list rather than
+  betting on one string.
 
 
 The drop-anything reference inbox at `worker/save-ref/`, now with an LLM layer
