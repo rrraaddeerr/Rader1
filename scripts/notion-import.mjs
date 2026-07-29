@@ -55,7 +55,17 @@ if (!REFS) {
   process.exit(1);
 }
 if (!DRY && (!BASE || !TOKEN)) {
-  console.error("\nSet BIGBRAIN_URL and BIGBRAIN_TOKEN first.\n");
+  // Say which one, and how to check — an empty $TOKEN is easy to miss because
+  // /health needs no auth, so a working health check proves nothing about it.
+  console.error("");
+  console.error(BASE ? `  BIGBRAIN_URL  ok  (${BASE})` : "  BIGBRAIN_URL   is EMPTY");
+  console.error(TOKEN ? `  BIGBRAIN_TOKEN ok  (${TOKEN.length} chars)` : "  BIGBRAIN_TOKEN is EMPTY");
+  console.error("\nCheck them without printing the token:\n");
+  console.error('  echo "URL=[$URL]"');
+  console.error('  echo "TOKEN is ${#TOKEN} chars"');
+  console.error("\nSet them one line at a time (pasting a block can make `read` eat the next line):\n");
+  console.error("  export URL=https://save-ref-v2.raderturner-e87.workers.dev");
+  console.error("  read -rs TOKEN && export TOKEN\n");
   process.exit(1);
 }
 

@@ -41,11 +41,12 @@ const URL_BASE = (process.env.BIGBRAIN_URL || "").replace(/\/+$/, "");
 const TOKEN = process.env.BIGBRAIN_TOKEN || "";
 
 if (!DRY && (!URL_BASE || !TOKEN)) {
-  console.error(
-    "Set BIGBRAIN_URL and BIGBRAIN_TOKEN.\n\n" +
-      "  BIGBRAIN_URL=https://save-ref-v2.<you>.workers.dev \\\n" +
-      "  BIGBRAIN_TOKEN=<token> node scripts/index-inventory.mjs\n"
-  );
+  console.error("");
+  console.error(URL_BASE ? `  BIGBRAIN_URL  ok  (${URL_BASE})` : "  BIGBRAIN_URL   is EMPTY");
+  console.error(TOKEN ? `  BIGBRAIN_TOKEN ok  (${TOKEN.length} chars)` : "  BIGBRAIN_TOKEN is EMPTY");
+  console.error('\nCheck without printing the token:  echo "TOKEN is ${#TOKEN} chars"');
+  console.error("\n  export URL=https://save-ref-v2.<you>.workers.dev");
+  console.error("  read -rs TOKEN && export TOKEN\n");
   process.exit(1);
 }
 
