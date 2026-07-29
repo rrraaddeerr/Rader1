@@ -66,9 +66,28 @@ futureoutfit when they're live. Photo pages sell ad slots surprisingly
 well — "this slide could be your product's before/after" is a native ad
 unit here.
 
+## Sourcing (zero-token harvester)
+
+`harvest.mjs` scrapes before/after candidates from free JSON APIs —
+Reddit public listings, Wikimedia Commons, Library of Congress — no API
+keys, no AI tokens. It dedupes into `harvest/candidates.jsonl` and builds
+`harvest/curate.html`: a keep/skip gallery that exports queue-ready CSV
+rows with credit + license attached.
+
+It runs on GitHub Actions (`.github/workflows/harvest.yml` — manual "Run
+workflow" button, Mon/Thu cron once merged to main, or automatically when
+the harvester file changes), which commits the refreshed gallery back to
+the repo. It also runs anywhere with Node 18+: `node harvest.mjs`.
+
+Rights rule: Reddit finds are leads — marked "ask author / use as lead
+only". The repost-safe wells are Wikimedia Commons and LoC (public
+domain / clearly licensed, credit shown in the gallery).
+
 ## Files
 
 - `make-post.mjs` — the renderer (playwright-core + system Chromium)
 - `queue.csv` — the content queue; 10 seed rows across 5 series
+- `harvest.mjs` — content scraper; writes `harvest/` gallery
+- `harvest/curate.html` — committed, refreshed by the Actions workflow
 - `assets/<id>/` — source images (gitignored; drop zone)
 - `out/<id>/` — rendered bundles (gitignored)
