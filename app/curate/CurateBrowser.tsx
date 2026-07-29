@@ -68,6 +68,10 @@ export function CurateBrowser({
     if (hydrated) saveJSON(RENAMES_KEY, renames);
   }, [renames, hydrated]);
 
+  useEffect(() => {
+    if (hydrated) saveJSON(SORT_KEY, verdicts);
+  }, [verdicts, hydrated]);
+
   // Barcodes grouped by their VPC subcategory — for bulk operations.
   const barcodesBySubcategory = useMemo(() => {
     const map = new Map<string, string[]>();

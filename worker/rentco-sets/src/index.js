@@ -4,44 +4,52 @@
  * Lives at `rentco-sets.<your-subdomain>.workers.dev`.
  *
  * Endpoints:
- *   GET    /set/<id>          — fetch a set + responses (public, slug is the auth)
+ *   GET    /set/<id>          — fetch a set (public; responses included only for operator)
  *   PUT    /set/<id>          — upsert a set (operator, requires Bearer OPERATOR_TOKEN)
  *   DELETE /set/<id>          — delete a set (operator)
  *   GET    /sets              — list all sets (operator)
  *   POST   /response/<id>     — submit/update a client response (public, visitor self-declared)
  *
  * Storage layout (keys in the bound KV namespace):
- *   set:<id>          → the set object as JSON
- *   responses:<id>    → array of { visitor, name, decisions, updated_at }
- *
- * CORS: allows all origins. Slug is unguessable so reads are not sensitive.
+ *   set:<id>            → the set object as JSON
+ *   resp:<id>:<visitor> → one visitor's response (per-visitor key, no shared-array races)
+ *   responses:<id>      → legacy array from the v1 layout; still read+merged, never written
  */
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Max-Age": "86400",
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://r-ent.co",
+  "https://www.r-ent.co",
+  "http://localhost:3000",
+]);
 
-function json(body, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      ...CORS_HEADERS,
-      ...extraHeaders,
-    },
-  });
+function corsHeaders(request) {
+  const origin = request?.headers?.get?.("Origin") ?? "";
+  return {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGINS.has(origin) ? origin : "https://r-ent.co",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
 }
 
-function requireOperator(request, env) {
+const MAX_RESPONDERS_PER_SET = 50;
+const MAX_DECISION_KEYS = 500;
+const DECISION_VALUES = new Set(["approve", "maybe", "pass"]);
+
+function makeJson(request) {
+  const headers = corsHeaders(request);
+  return (body, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json", ...headers },
+    });
+}
+
+function isOperator(request, env) {
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/, "");
-  if (!env.OPERATOR_TOKEN || token !== env.OPERATOR_TOKEN) {
-    return json({ ok: false, error: "Unauthorized" }, 401);
-  }
-  return null;
+  return Boolean(env.OPERATOR_TOKEN) && token === env.OPERATOR_TOKEN;
 }
 
 async function listSets(env) {
@@ -54,10 +62,44 @@ async function listSets(env) {
   return sets.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
 }
 
+// Merge per-visitor keys with the legacy array (per-visitor wins on conflict).
+async function readResponses(env, id) {
+  const byVisitor = new Map();
+  const legacy = (await env.SETS_KV.get(`responses:${id}`, "json")) ?? [];
+  for (const r of legacy) if (r?.visitor) byVisitor.set(r.visitor, r);
+  const list = await env.SETS_KV.list({ prefix: `resp:${id}:` });
+  for (const key of list.keys) {
+    const r = await env.SETS_KV.get(key.name, "json");
+    if (r?.visitor) byVisitor.set(r.visitor, r);
+  }
+  return [...byVisitor.values()].sort((a, b) =>
+    (a.updated_at ?? "") < (b.updated_at ?? "") ? -1 : 1
+  );
+}
+
+function sanitizeDecisions(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  let n = 0;
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof k !== "string" || k.length > 120) continue;
+    if (typeof v !== "string" || !DECISION_VALUES.has(v)) continue;
+    out[k] = v;
+    if (++n >= MAX_DECISION_KEYS) break;
+  }
+  return out;
+}
+
+// Webhook text: strip markdown-ish characters from untrusted fields.
+function plain(s) {
+  return String(s ?? "").replace(/[*_`>@#|~]/g, "").slice(0, 280);
+}
+
 export default {
   async fetch(request, env, ctx) {
+    const json = makeJson(request);
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return new Response(null, { status: 204, headers: corsHeaders(request) });
     }
 
     const url = new URL(request.url);
@@ -66,54 +108,48 @@ export default {
     try {
       // GET /sets (operator) — list all sets
       if (path === "/sets" && request.method === "GET") {
-        const fail = requireOperator(request, env);
-        if (fail) return fail;
+        if (!isOperator(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
         const sets = await listSets(env);
         return json({ sets });
       }
 
-      // GET /set/<id> (public) — fetch a set + its responses
+      // GET /set/<id> — public gets the set only; operator also gets responses
       if (path.startsWith("/set/") && request.method === "GET") {
         const id = path.slice(5);
         if (!id) return json({ ok: false, error: "Missing id" }, 400);
         const data = await env.SETS_KV.get(`set:${id}`, "json");
         if (!data) return json({ ok: false, error: "Set not found" }, 404);
-        const responses = (await env.SETS_KV.get(`responses:${id}`, "json")) ?? [];
-        // If unpublished, only return to operator
-        if (data.unpublished) {
-          const fail = requireOperator(request, env);
-          if (fail) return fail;
+        const operator = isOperator(request, env);
+        if (data.unpublished && !operator) {
+          return json({ ok: false, error: "Unauthorized" }, 401);
         }
+        const responses = operator ? await readResponses(env, id) : [];
         return json({ set: data, responses });
       }
 
       // PUT /set/<id> (operator) — upsert
       if (path.startsWith("/set/") && request.method === "PUT") {
-        const fail = requireOperator(request, env);
-        if (fail) return fail;
+        if (!isOperator(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
         const id = path.slice(5);
         if (!id) return json({ ok: false, error: "Missing id" }, 400);
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== "object") {
           return json({ ok: false, error: "Invalid body" }, 400);
         }
-        const stored = {
-          ...body,
-          id,
-          updated_at: new Date().toISOString(),
-        };
+        const stored = { ...body, id, updated_at: new Date().toISOString() };
         await env.SETS_KV.put(`set:${id}`, JSON.stringify(stored));
         return json({ ok: true, set: stored });
       }
 
       // DELETE /set/<id> (operator)
       if (path.startsWith("/set/") && request.method === "DELETE") {
-        const fail = requireOperator(request, env);
-        if (fail) return fail;
+        if (!isOperator(request, env)) return json({ ok: false, error: "Unauthorized" }, 401);
         const id = path.slice(5);
         if (!id) return json({ ok: false, error: "Missing id" }, 400);
         await env.SETS_KV.delete(`set:${id}`);
         await env.SETS_KV.delete(`responses:${id}`);
+        const list = await env.SETS_KV.list({ prefix: `resp:${id}:` });
+        for (const key of list.keys) await env.SETS_KV.delete(key.name);
         return json({ ok: true });
       }
 
@@ -130,46 +166,58 @@ export default {
         if (!body || typeof body !== "object") {
           return json({ ok: false, error: "Invalid body" }, 400);
         }
-        const visitor =
-          typeof body.visitor === "string" && body.visitor.length > 0
-            ? body.visitor.slice(0, 64)
-            : crypto.randomUUID();
-        const responses = (await env.SETS_KV.get(`responses:${id}`, "json")) ?? [];
+        const claimed =
+          typeof body.visitor === "string" && /^[A-Za-z0-9_-]{4,64}$/.test(body.visitor)
+            ? body.visitor
+            : "";
+        const visitor = claimed || crypto.randomUUID();
+
+        const existing = await env.SETS_KV.get(`resp:${id}:${visitor}`, "json");
+        let isFirstFromThisVisitor = !existing;
+        if (isFirstFromThisVisitor) {
+          // Legacy layout may still hold this visitor.
+          const legacy = (await env.SETS_KV.get(`responses:${id}`, "json")) ?? [];
+          if (legacy.some((r) => r?.visitor === visitor)) isFirstFromThisVisitor = false;
+          // Cap distinct responders per set (storage-amplification guard).
+          if (isFirstFromThisVisitor) {
+            const list = await env.SETS_KV.list({ prefix: `resp:${id}:`, limit: MAX_RESPONDERS_PER_SET + 1 });
+            if (list.keys.length + legacy.length >= MAX_RESPONDERS_PER_SET) {
+              return json({ ok: false, error: "This set is not accepting more responders." }, 429);
+            }
+          }
+        }
+
         const entry = {
           visitor,
           name:
             typeof body.name === "string" && body.name.trim()
               ? body.name.trim().slice(0, 80)
               : "Anonymous",
-          decisions:
-            body.decisions && typeof body.decisions === "object" ? body.decisions : {},
+          decisions: sanitizeDecisions(body.decisions),
           note: typeof body.note === "string" ? body.note.slice(0, 2000) : "",
+          done: body.done === true ? true : existing?.done === true ? true : undefined,
+          done_at:
+            body.done === true
+              ? new Date().toISOString()
+              : existing?.done_at ?? undefined,
           updated_at: new Date().toISOString(),
         };
-        const existingIdx = responses.findIndex((r) => r.visitor === visitor);
-        const isFirstFromThisVisitor = existingIdx < 0;
-        if (existingIdx >= 0) responses[existingIdx] = entry;
-        else responses.push(entry);
-        await env.SETS_KV.put(`responses:${id}`, JSON.stringify(responses));
+        await env.SETS_KV.put(`resp:${id}:${visitor}`, JSON.stringify(entry));
 
-        // Best-effort webhook notification (Slack/Discord/Zapier/any URL).
-        // Configured by `wrangler secret put NOTIFY_WEBHOOK` and pinged for
-        // the first response from a visitor + every save with a fresh note.
-        // Operator opts in by setting the secret; absent = silent.
-        if (env.NOTIFY_WEBHOOK) {
+        // Webhook: only on a visitor's first save and on explicit "done" —
+        // never on every keystroke autosave.
+        const shouldNotify = env.NOTIFY_WEBHOOK && (isFirstFromThisVisitor || body.done === true);
+        if (shouldNotify) {
           try {
             const approve = Object.values(entry.decisions).filter((v) => v === "approve").length;
             const maybe = Object.values(entry.decisions).filter((v) => v === "maybe").length;
             const pass = Object.values(entry.decisions).filter((v) => v === "pass").length;
             const summary =
-              `${isFirstFromThisVisitor ? "🆕 " : "🔁 "}` +
-              `*${entry.name}* on *${set.name}*` +
-              (set.client ? ` (for ${set.client})` : "") +
+              `${body.done === true ? "✅ DONE " : "🆕 "}` +
+              `${plain(entry.name)} on ${plain(set.name)}` +
+              (set.client ? ` (for ${plain(set.client)})` : "") +
               ` — ${approve}✓ ${maybe}◐ ${pass}✗` +
-              (entry.note ? `\n> ${entry.note.slice(0, 280)}` : "");
-            // Try Slack-shape first ({text}). Discord also accepts ?wait=true
-            // POST with {content}. Send both shapes and let the receiver use
-            // whichever it understands. (Worker fetch is fire-and-forget.)
+              (entry.note ? `\n${plain(entry.note)}` : "");
             const payload = { text: summary, content: summary };
             ctx?.waitUntil?.(
               fetch(env.NOTIFY_WEBHOOK, {

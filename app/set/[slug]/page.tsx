@@ -21,7 +21,7 @@ export async function generateMetadata({
   if (!setsConfigured()) return { title: "Sets not configured" };
   try {
     const set = await findBySlug(slug);
-    if (!set) return { title: "Set not found" };
+    if (!set || set.unpublished) return { title: "Set not found" };
     return {
       title: `${set.name}${set.client ? ` — ${set.client}` : ""}`,
       robots: { index: false, follow: false },

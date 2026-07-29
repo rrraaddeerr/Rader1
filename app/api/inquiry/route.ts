@@ -106,7 +106,11 @@ export async function POST(request: Request) {
     attachments: inquiry.attachments,
     submitted_at: inquiry.submitted_at,
   };
-  console.log(`[inquiry:${record.kind}]`, JSON.stringify(record));
+  // Log metadata only — full PII (email/phone/message) belongs in the
+  // configured sinks (Notion/webhook), not platform log retention.
+  console.log(
+    `[inquiry:${record.kind}] from=${record.fields.name || record.fields.company || "?"} items=${record.selected_items?.length ?? 0} at=${record.submitted_at ?? ""}`
+  );
 
   try {
     const dir = path.join(process.cwd(), "data", "submissions");
@@ -120,14 +124,23 @@ export async function POST(request: Request) {
     // Read-only filesystem (e.g. serverless) — logging + webhook still cover it.
   }
 
+  // Forward to every configured sink, tracking real delivery. A non-2xx from
+  // a sink is a failure — previously these were treated as success, which
+  // could silently drop the entire lead flow on config drift.
+  let configured = 0;
+  let delivered = 0;
+
   const webhook = process.env.INQUIRY_WEBHOOK_URL;
   if (webhook) {
+    configured++;
     try {
-      await fetch(webhook, {
+      const res = await fetch(webhook, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(record),
       });
+      if (res.ok) delivered++;
+      else console.error(`[inquiry] webhook forward failed: HTTP ${res.status}`);
     } catch (err) {
       console.error("[inquiry] webhook forward failed:", err);
     }
@@ -136,8 +149,9 @@ export async function POST(request: Request) {
   const notionToken = process.env.NOTION_TOKEN;
   const notionDb = process.env.NOTION_DATABASE_ID;
   if (notionToken && notionDb) {
+    configured++;
     try {
-      await fetch("https://api.notion.com/v1/pages", {
+      const res = await fetch("https://api.notion.com/v1/pages", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${notionToken}`,
@@ -146,9 +160,27 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify(buildNotionPage(notionDb, record)),
       });
+      if (res.ok) delivered++;
+      else {
+        const detail = await res.text().catch(() => "");
+        console.error(
+          `[inquiry] notion forward failed: HTTP ${res.status} ${detail.slice(0, 300)}`
+        );
+      }
     } catch (err) {
       console.error("[inquiry] notion forward failed:", err);
     }
+  }
+
+  if (configured > 0 && delivered === 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "We couldn't record your request just now. Please email hello@r-ent.co and we'll take it from there.",
+      },
+      { status: 502 }
+    );
   }
 
   return NextResponse.json({ ok: true });

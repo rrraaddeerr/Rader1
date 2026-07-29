@@ -6,8 +6,9 @@ import { usePathname } from "next/navigation";
 import { useCart } from "@/lib/cart";
 import { BrandStamp } from "./BrandStamp";
 
-function useGuestLabel(): string | null {
+function useGuest(): { label: string | null; isOperator: boolean } {
   const [label, setLabel] = useState<string | null>(null);
+  const [isOperator, setIsOperator] = useState(false);
   useEffect(() => {
     const m = document.cookie.match(/(?:^|;\s*)rentco_guest=([^;]+)/);
     if (m) {
@@ -17,8 +18,10 @@ function useGuestLabel(): string | null {
         setLabel(m[1]);
       }
     }
+    const r = document.cookie.match(/(?:^|;\s*)rentco_role=([^;]+)/);
+    setIsOperator(r?.[1] === "operator");
   }, []);
-  return label;
+  return { label, isOperator };
 }
 
 const NAV = [
@@ -33,7 +36,7 @@ export function SiteHeader() {
   const pathname = usePathname();
   const count = useCart((s) => s.ids.length);
   const hydrated = useCart((s) => s.hydrated);
-  const guest = useGuestLabel();
+  const { label: guest, isOperator } = useGuest();
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -68,16 +71,21 @@ export function SiteHeader() {
           </Link>
         </nav>
 
-        {guest ? (
+        {guest && isOperator ? (
           <Link
             href="/ops"
             className="site-header__guest"
             aria-label={`Signed in as ${guest} — open operator dashboard`}
-            title={`Invited as ${guest} — tap for /ops`}
+            title={`Operator ${guest} — tap for /ops`}
           >
             <span className="site-header__guest-prefix">OPERATOR //</span>{" "}
             <span className="site-header__guest-name">{guest}</span>
           </Link>
+        ) : guest ? (
+          <span className="site-header__guest" title={`Invited as ${guest}`}>
+            <span className="site-header__guest-prefix">INVITED //</span>{" "}
+            <span className="site-header__guest-name">{guest}</span>
+          </span>
         ) : null}
 
         <button

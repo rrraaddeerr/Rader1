@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { submitInquiry } from "@/lib/submit";
 import {
   TextField,
   TextArea,
-  FileField,
   FormRow,
   FormFeedback,
   Honeypot,
@@ -26,26 +25,23 @@ const empty = {
 
 export function SourcingForm() {
   const [f, setF] = useState(empty);
-  const [files, setFiles] = useState<{ name: string; size: number }[]>([]);
+  const [links, setLinks] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [error, setError] = useState<string>();
 
   const set = (k: keyof typeof empty) => (v: string) => setF((p) => ({ ...p, [k]: v }));
 
-  const onFiles = (e: ChangeEvent<HTMLInputElement>) => {
-    setFiles(Array.from(e.target.files ?? []).map((x) => ({ name: x.name, size: x.size })));
-  };
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const hp = readHoneypot(e.currentTarget);
     setStatus("submitting");
     setError(undefined);
-    const res = await submitInquiry("sourcing", f, { attachments: files, hp });
+    const res = await submitInquiry("sourcing", links.trim() ? { ...f, reference_links: links.trim() } : f, { hp });
     if (res.ok) {
       setStatus("success");
       setF(empty);
-      setFiles([]);
+      setLinks("");
     } else {
       setStatus("error");
       setError(res.error);
@@ -128,15 +124,15 @@ export function SourcingForm() {
         onChange={set("delivery_or_logistics_needs")}
         placeholder="Where it needs to land, how it gets there, install or strike support…"
       />
-      <FileField
-        name="references_upload"
-        label="References"
-        hint="Attach images or PDFs. Large files can also be linked in the description above."
-        onChange={onFiles}
+      <TextArea
+        name="reference_links"
+        label="Reference links"
+        hint="Paste links to references — Drive, Dropbox, Pinterest, Are.na, anything viewable."
+        rows={2}
+        value={links}
+        onChange={setLinks}
+        placeholder="https://…"
       />
-      {files.length > 0 && (
-        <p className="form-files">{files.map((x) => x.name).join(", ")}</p>
-      )}
 
       <FormFeedback status={status} error={error} successMessage="" />
       <button type="submit" className="btn btn--accent" disabled={status === "submitting"}>

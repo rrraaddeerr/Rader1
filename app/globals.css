@@ -2483,7 +2483,7 @@ textarea.field__control {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 2px;
-  color: #56565a;
+  color: var(--muted);
   text-transform: uppercase;
   text-align: center;
   padding-top: 32px;

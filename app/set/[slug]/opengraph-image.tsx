@@ -27,6 +27,7 @@ export default async function SetOpengraphImage({
   let groupCount = 0;
   let itemCount = 0;
   let status = "OPEN";
+  let locked = false;
 
   if (setsConfigured()) {
     try {
@@ -38,6 +39,7 @@ export default async function SetOpengraphImage({
         groupCount = set.groups?.length ?? 0;
         itemCount = set.groups?.reduce((n, g) => n + g.items.length, 0) ?? 0;
         status = SET_STAGE_LABELS[deriveStage(set)].short;
+        locked = Boolean(set.locked);
       }
     } catch {
       // worker unreachable — render generic
@@ -121,7 +123,7 @@ export default async function SetOpengraphImage({
               marginTop: 26,
             }}
           >
-            {`${groupCount} groups · ${itemCount} objects · Open for review`}
+            {`${groupCount} groups · ${itemCount} objects · ${locked ? "Closed" : "Open for review"}`}
           </div>
         </div>
 

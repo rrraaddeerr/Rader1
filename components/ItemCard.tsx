@@ -11,7 +11,7 @@ export function ItemCard({ item }: { item: InventoryItem }) {
         <div className="card__media">
           {item.images.length > 0 ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={item.images[0]} alt={item.title} loading="lazy" />
+            <img src={item.images[0].replace(/^\/inventory\//, "/inventory/thumbs/")} alt={item.title} loading="lazy" width={240} height={160} />
           ) : (
             <ItemPlaceholder item={item} />
           )}

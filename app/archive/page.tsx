@@ -7,7 +7,7 @@ import { ArchiveBrowser } from "./ArchiveBrowser";
 export const metadata: Metadata = {
   title: "Archive",
   description:
-    "Search and explore rent.co's curated, manually verified inventory — filter by category, era, vibe, and source. Manual inquiry only, no checkout.",
+    "Search and explore rent.co's curated, manually verified inventory — browse by category, tag, and vibe. Manual inquiry only, no checkout.",
 };
 
 export default function ArchivePage() {

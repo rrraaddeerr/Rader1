@@ -105,7 +105,7 @@ export default async function OpengraphImage() {
               transform: "rotate(-1.6deg)",
             }}
           >
-            ARCHIVE ONLINE — VANCOUVER HQ, ACCESS ANYWHERE
+            OPENING SOON — VANCOUVER HQ, INVITE ONLY
           </div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SetDoc, SetGroup, SetItem, SetResponse, SetStage } from "@/lib/sets";
 import { SET_STAGES, SET_STAGE_LABELS, deriveStage } from "@/lib/sets";
 import { DirectorChairIcon } from "@/components/Icons";
@@ -65,23 +65,29 @@ export function SetEditor({
     return () => clearInterval(interval);
   }, [doc.id, doc.unpublished]);
 
-  // Auto-save 800 ms after the last change.
+  // Auto-save 800 ms after the last change. `save.kind` is a dependency so
+  // that when an in-flight save finishes, the effect re-runs and reschedules
+  // any edit made during the flight (previously such trailing edits were
+  // silently dropped while the status bar showed "saved").
+  const lastSavedRef = useRef(JSON.stringify(initialSet));
   useEffect(() => {
     if (save.kind === "saving") return;
     const handle = setTimeout(async () => {
-      if (JSON.stringify(doc) === JSON.stringify(initialSet)) return;
+      const snapshot = JSON.stringify(doc);
+      if (snapshot === lastSavedRef.current) return;
       setSave({ kind: "saving" });
       try {
         const res = await fetch(`/api/sets/${encodeURIComponent(doc.id)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(doc),
+          body: snapshot,
         });
         const json = await res.json();
         if (!res.ok || !json.ok) {
           setSave({ kind: "error", message: json.error ?? `HTTP ${res.status}` });
           return;
         }
+        lastSavedRef.current = snapshot;
         setSave({ kind: "saved", at: Date.now() });
       } catch (err) {
         setSave({
@@ -92,7 +98,7 @@ export function SetEditor({
     }, 800);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc]);
+  }, [doc, save.kind]);
 
   const updateDoc = (mutate: (d: SetDoc) => void) => {
     setDoc((prev) => {
@@ -571,7 +577,7 @@ export function SetEditor({
                         placeholder={cat?.title ?? "Item title"}
                         onChange={(e) =>
                           updateItem(g.id, it.barcode, (i) => {
-                            i.title = e.target.value;
+                            i.title = e.target.value || undefined;
                           })
                         }
                         className="set-edit__item-title"

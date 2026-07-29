@@ -66,7 +66,7 @@ export default async function OpsPage() {
 
   const photoLinked = inventory.filter((i) => i.images.length > 0).length;
   const thumbsCovered = vpc.filter((i) => i.thumb).length;
-  const featured = inventory.filter((i) => i.tags?.includes("Featured")).length;
+  const featured = inventory.filter((i) => i.featured).length;
 
   // Sets stats (best-effort; sets storage might not be configured yet)
   let setsTotal = 0;

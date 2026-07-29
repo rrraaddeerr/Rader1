@@ -55,6 +55,8 @@ export function PresentationView({
   const [submitting, setSubmitting] = useState(false);
   const [savedTick, setSavedTick] = useState(0);
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [syncError, setSyncError] = useState(false);
   const [lightbox, setLightbox] = useState<{
     src: string;
     title: string;
@@ -69,7 +71,7 @@ export function PresentationView({
       for (const it of g.items) {
         const src = it.catalog?.thumb;
         if (!src) continue;
-        out.push({ src, title: it.title ?? it.catalog?.title ?? "", group: g.label });
+        out.push({ src, title: it.title || it.catalog?.title || "", group: g.label });
       }
     }
     return out;
@@ -117,36 +119,46 @@ export function PresentationView({
     if (hydrated) saveLocal(set.id, local);
   }, [local, hydrated, set.id]);
 
-  // Debounced server sync of the visitor's responses.
+  // Server sync of the visitor's responses (same-origin proxy -> worker).
+  const syncNow = async (opts?: { done?: boolean }): Promise<boolean> => {
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/respond/${encodeURIComponent(set.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visitor: local.visitor || undefined,
+          name: local.name,
+          decisions: local.decisions,
+          note: local.note,
+          done: opts?.done,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (json.ok && json.visitor && !local.visitor) {
+        setLocal((prev) => ({ ...prev, visitor: json.visitor }));
+      }
+      if (res.ok && json.ok !== false) {
+        setSavedTick((t) => t + 1);
+        setSyncError(false);
+        return true;
+      }
+      setSyncError(true);
+      return false;
+    } catch {
+      setSyncError(true);
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Debounced auto-save while voting.
   useEffect(() => {
     if (!hydrated) return;
     if (!local.name.trim()) return; // wait for them to enter a name
-    const t = setTimeout(async () => {
-      setSubmitting(true);
-      try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_RENTCO_SETS_URL ?? ""}/response/${encodeURIComponent(set.id)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              visitor: local.visitor || undefined,
-              name: local.name,
-              decisions: local.decisions,
-              note: local.note,
-            }),
-          }
-        );
-        const json = await res.json();
-        if (json.ok && json.visitor && !local.visitor) {
-          setLocal((prev) => ({ ...prev, visitor: json.visitor }));
-        }
-        if (res.ok) setSavedTick((t) => t + 1);
-      } catch {
-        // best-effort sync
-      } finally {
-        setSubmitting(false);
-      }
+    const t = setTimeout(() => {
+      void syncNow();
     }, 900);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -277,16 +289,16 @@ export function PresentationView({
                         c?.thumb &&
                         openLightbox(
                           c.thumb,
-                          it.title ?? c?.title ?? "",
+                          it.title || c?.title || "",
                           g.label
                         )
                       }
                       disabled={!c?.thumb}
-                      aria-label={`Open full-size photo of ${it.title ?? c?.title ?? "item"}`}
+                      aria-label={`View photo of ${it.title || c?.title || "item"}`}
                     >
                       {c?.thumb ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={c.thumb} alt={it.title ?? c?.title ?? ""} />
+                        <img src={c.thumb} alt={it.title || c?.title || ""} />
                       ) : (
                         <div className="present-item__noimg">no image</div>
                       )}
@@ -297,7 +309,7 @@ export function PresentationView({
                     </button>
                     <div className="present-item__body">
                       <h3 className="present-item__title">
-                        {it.title ?? c?.title ?? "Untitled"}
+                        {it.title || c?.title || "Untitled"}
                       </h3>
                       {c?.dimensions ? (
                         <div className="present-item__meta">{c.dimensions}</div>
@@ -410,22 +422,33 @@ export function PresentationView({
                 <b style={{ color: "var(--accent)" }}>Send to Rader</b> and he&apos;ll
                 see it&apos;s ready to act on.
               </p>
+              {syncError ? (
+                <p role="alert" style={{ marginTop: 12, color: "var(--accent)" }}>
+                  Couldn&apos;t save your responses just now — check your
+                  connection and try again. Nothing is lost on this device.
+                </p>
+              ) : null}
               <button
                 type="button"
                 className="curate__btn curate__btn--accent present__send"
-                onClick={() => {
+                onClick={async () => {
                   if (!local.name.trim()) {
                     if (typeof window !== "undefined") {
                       window.alert("Please add your name first so Rader knows whose responses these are.");
                     }
                     return;
                   }
-                  setSent(true);
-                  if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+                  setSending(true);
+                  const ok = await syncNow({ done: true });
+                  setSending(false);
+                  if (ok) {
+                    setSent(true);
+                    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
                 }}
-                disabled={!local.name.trim()}
+                disabled={!local.name.trim() || sending}
               >
-                ✓ Send to Rader
+                {sending ? "Sending…" : "✓ Send to Rader"}
               </button>
             </>
           )}
@@ -437,7 +460,7 @@ export function PresentationView({
           className="present__lightbox"
           role="dialog"
           aria-modal="true"
-          aria-label={`Full-size photo of ${lightbox.title}`}
+          aria-label={`Photo of ${lightbox.title}`}
           onClick={(e) => {
             if (e.target === e.currentTarget) setLightbox(null);
           }}

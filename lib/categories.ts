@@ -56,10 +56,12 @@ export const eras = [
   "Contemporary",
 ] as const;
 
+// Public-facing labels. Supplier names stay internal — the public archive
+// speaks as one curated collection, not a directory of where things live.
 export const sourceOwnerLabels: Record<string, string> = {
   RaderENT: "RaderENT",
-  VPC: "VPC",
-  VPE: "VPE",
+  VPC: "Partner archive",
+  VPE: "Partner archive",
   partner_vendor: "Partner vendor",
   sourced_to_order: "Sourced to order",
 };

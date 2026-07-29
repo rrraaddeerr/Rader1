@@ -28,7 +28,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   if (!item) return { title: "Object not found" };
   return {
     title: item.title,
-    description: `${item.description} — ${item.category}, ${item.era}. Rental inquiry via rent.co.`,
+    description: `${item.description} — ${item.category}. Rental inquiry via rent.co.`,
   };
 }
 
@@ -46,13 +46,15 @@ export default async function ItemPage({ params }: Params) {
     description: item.description,
     category: item.category,
     sku: item.id,
-    ...(item.images.length > 0 ? { image: item.images } : {}),
-    ...(item.price_day != null
+    ...(item.images.length > 0
+      ? { image: item.images.map((i) => `https://r-ent.co${i}`) }
+      : {}),
+    ...(item.price_week != null
       ? {
           offers: {
             "@type": "Offer",
             priceCurrency: "CAD",
-            price: item.price_day,
+            price: item.price_week,
             availability: "https://schema.org/LimitedAvailability",
             businessFunction: "http://purl.org/goodrelations/v1#LeaseOut",
             url: `https://r-ent.co/archive/${item.slug}`,
@@ -70,7 +72,7 @@ export default async function ItemPage({ params }: Params) {
           <span className="item__slate-sep" aria-hidden="true">│</span>
           <span className="item__slate-id">{item.id.toUpperCase()}</span>
           <span className="item__slate-sep" aria-hidden="true">│</span>
-          <span>{item.location}</span>
+          <span>VANCOUVER</span>
         </div>
         <nav className="breadcrumb" aria-label="Breadcrumb">
           <Link href="/archive">Archive</Link>
@@ -100,19 +102,23 @@ export default async function ItemPage({ params }: Params) {
 
             <div className="price-box">
               <div className="price-box__item">
-                <span className="price-box__k">Day rate</span>
-                <span className="price-box__v">{formatPrice(item.price_day)}</span>
-              </div>
-              <div className="price-box__item">
                 <span className="price-box__k">Week rate</span>
                 <span className="price-box__v">{formatPrice(item.price_week)}</span>
               </div>
-              <div className="price-box__item">
-                <span className="price-box__k">Replacement value</span>
-                <span className="price-box__v">
-                  {formatPrice(item.replacement_value)}
-                </span>
-              </div>
+              {item.price_day != null ? (
+                <div className="price-box__item">
+                  <span className="price-box__k">Day rate</span>
+                  <span className="price-box__v">{formatPrice(item.price_day)}</span>
+                </div>
+              ) : null}
+              {item.replacement_value != null ? (
+                <div className="price-box__item">
+                  <span className="price-box__k">Replacement value</span>
+                  <span className="price-box__v">
+                    {formatPrice(item.replacement_value)}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             <p className="item__avail">
@@ -134,17 +140,15 @@ export default async function ItemPage({ params }: Params) {
                   <th>Dimensions</th>
                   <td>{item.dimensions}</td>
                 </tr>
-                <tr>
-                  <th>Era</th>
-                  <td>{item.era}</td>
-                </tr>
+                {/* Era hidden until the data carries real values — today every
+                    item reads "Contemporary", which contradicts vintage pieces. */}
                 <tr>
                   <th>Source / owner</th>
                   <td>{sourceOwnerLabels[item.source_owner] ?? item.source_owner}</td>
                 </tr>
                 <tr>
                   <th>Location</th>
-                  <td>{item.location}</td>
+                  <td>Vancouver warehouse</td>
                 </tr>
                 <tr>
                   <th>Condition</th>

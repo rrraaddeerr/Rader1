@@ -12,15 +12,24 @@ const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "hello@r-ent.co";
 
 type Tease = { src: string; title: string };
 
+// 240px thumbs exist for every archive image at /inventory/thumbs/<basename>.
+function thumbOf(src: string): string {
+  return src.replace(/^\/inventory\//, "/inventory/thumbs/");
+}
+
+// A looping marquee doesn't need 590 unique frames — cap the pool so the
+// gate screen weighs a few hundred KB instead of the whole archive.
+const MARQUEE_POOL = 60;
+
 function shuffled(): Tease[] {
   const pool = getAllItems()
     .filter((item) => item.images?.[0])
-    .map((item) => ({ src: item.images[0]!, title: item.title }));
+    .map((item) => ({ src: thumbOf(item.images[0]!), title: item.title }));
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  return pool;
+  return pool.slice(0, MARQUEE_POOL);
 }
 
 function chunk<T>(arr: T[], rows: number): T[][] {
@@ -58,7 +67,7 @@ export default async function AccessPage({
             <div className="access-marquee__track">
               {[...row, ...row].map((item, j) => (
                 <div className="access-marquee__cell" key={j}>
-                  <img src={item.src} alt="" loading="lazy" />
+                  <img src={item.src} alt="" loading="lazy" width={240} height={160} />
                 </div>
               ))}
             </div>

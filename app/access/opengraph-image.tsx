@@ -95,8 +95,8 @@ export default async function AccessOpengraphImage() {
               lineHeight: 1.02,
             }}
           >
-            <div>is open for</div>
-            <div style={{ color: "#ff5a1f", marginLeft: 22 }}>invited</div>
+            <div>is opening</div>
+            <div style={{ color: "#ff5a1f", marginLeft: 22 }}>soon</div>
           </div>
           <div
             style={{
@@ -106,7 +106,7 @@ export default async function AccessOpengraphImage() {
               lineHeight: 1.02,
             }}
           >
-            guests.
+            — invites out.
           </div>
           <div
             style={{

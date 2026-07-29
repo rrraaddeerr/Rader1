@@ -26,12 +26,10 @@ music / fashion / nightlife / festival / film world.
 
 - **GitHub repo:** [rrraaddeerr/Rader1](https://github.com/rrraaddeerr/Rader1)
 - **Working branch:** `claude/build-rentco-mvp-LNT1S` (drives PR #1)
-- **Vercel "Production Branch":** `claude/photo-purge-swipe-app-Mm7sH` (legacy
-  name from the original Expo project Vercel was first wired to). To ship to
-  production, fast-forward this branch from `main`:
-  `git push origin origin/main:refs/heads/claude/photo-purge-swipe-app-Mm7sH`.
-  Pushing to `main` alone only creates Vercel previews.
-- **Vercel project:** `mvp` (repo `rrraaddeerr/Rader1`)
+- **Vercel "Production Branch":** `rentco-site` — pushing to it auto-deploys
+  production at https://r-ent.co. (`main` belongs to the separate Future
+  Outfit project; it can no longer touch the rent.co domain.)
+- **Vercel project:** `rentco` (team RENTCO, repo `rrraaddeerr/Rader1`)
 - **Current public URL:** `https://mvp-hazel-omega.vercel.app`
 - **Domain to attach:** `r-ent.co` (GoDaddy customer #117122741)
 - **Pull request:** [#1](https://github.com/rrraaddeerr/Rader1/pull/1)
@@ -86,6 +84,12 @@ without a valid `rentco_access` cookie gets redirected to the gate.
 Static assets, robots, sitemap, and OG images stay public so shared
 links still unfurl with the brand teaser.
 
+- **Roles:** codes are guest by default. Operator surfaces (/sets, /ops,
+  /curate, /api/sets) need an operator-role code: append `:op`
+  (e.g. `mysecret:Rader:op`) or use the separate `OPERATOR_CODES` env var.
+  With neither set, operator pages are locked for everyone.
+- **Fail-closed:** if `ACCESS_CODES` is unset entirely, NO code works
+  (the old fallback `operator`/`launch` dictionary words are gone).
 - **Configure codes** via the `ACCESS_CODES` env var on Vercel:
   `alex:Alex,sam:Sam,marcus:Marcus,vip:VIP` — `code:Label` pairs,
   comma-separated. The label is the name that greets the visitor.
@@ -217,8 +221,9 @@ respond Approve / Maybe / Pass per item. Real-time tally back to operator.
 
 ## Open items
 
-- **Domain not pointed yet** — `r-ent.co` is registered at GoDaddy but DNS still points to GoDaddy parking, not Vercel. See **Domain setup** below.
-- **No email inbox** — `hello@r-ent.co` is the planned contact address but no MX records yet.
+- **Domain LIVE** — `r-ent.co` A-record points to Vercel; site serves production.
+- **Email** — MX for r-ent.co exists (Outlook protection). Send one test mail to
+  `hello@r-ent.co` and confirm receipt — it's the only public contact address.
 - **Inquiry destination** — currently local logging only; not wired to email/CRM.
 - **Vercel Pro trial** — ~12 days left, needs a card before it expires.
 - **GitHub 2FA** — Rader saw the prompt; should set it up at some point.
@@ -260,7 +265,7 @@ git push origin claude/build-rentco-mvp-LNT1S
 git push origin claude/build-rentco-mvp-LNT1S:main
 
 # 3. Ship to production (Vercel only auto-deploys this branch)
-git push origin origin/main:refs/heads/claude/photo-purge-swipe-app-Mm7sH
+git push origin <branch>:rentco-site   # rentco-site is the production branch
 ```
 
 Production rebuilds in ~90 seconds.
