@@ -35,6 +35,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join, resolve, basename } from "node:path";
+import { parseCsv } from "./lib/csv.mjs";
 import { classify, titleFor, summarize, instagramShortcode, normalizeHandle } from "../worker/save-ref/src/realm.js";
 
 const run = promisify(execFile);
@@ -62,35 +63,6 @@ if (!IG || !REFS) {
 }
 
 // ------------------------------------------------------------------ helpers
-
-/** Minimal RFC-4180 CSV parser — quoted fields, embedded commas and newlines. */
-export function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else quoted = false;
-      } else field += c;
-      continue;
-    }
-    if (c === '"') { quoted = true; continue; }
-    if (c === ",") { row.push(field); field = ""; continue; }
-    if (c === "\r") continue;
-    if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; continue; }
-    field += c;
-  }
-  if (field.length || row.length) { row.push(field); rows.push(row); }
-  if (!rows.length) return [];
-  const header = rows.shift().map((h) => h.trim());
-  return rows
-    .filter((r) => r.some((v) => v !== ""))
-    .map((r) => Object.fromEntries(header.map((h, i) => [h, r[i] ?? ""])));
-}
 
 /** Walk a directory tree looking for a file by name. */
 async function findFile(dir, name) {
