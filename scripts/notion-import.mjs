@@ -341,7 +341,14 @@ while (rounds++ < 200) {
     break;
   }
 }
-console.log(`\n\n${indexed} refs embedded. Try it:\n`);
-console.log(`  curl -s -X POST "$BIGBRAIN_URL/api/ask" -H "X-Auth-Token: $BIGBRAIN_TOKEN" \\`);
-console.log(`    -H "Content-Type: application/json" -d '{"q":"what am I into lately?"}'`);
-console.log("");
+console.log(`\n\n${indexed} refs embedded.`);
+if (indexed < refs.length) {
+  console.log(`(${refs.length - indexed} had no text to embed — usually a row with no title or notes.)`);
+}
+// Print the real URL rather than a variable name: the credentials are often
+// passed inline for one command, so $BIGBRAIN_URL isn't set in the shell.
+console.log("\nTry it:\n");
+console.log(`  curl -s -X POST "${BASE}/api/ask" -H "X-Auth-Token: $TOKEN" \\`);
+console.log(`    -H "Content-Type: application/json" \\`);
+console.log(`    -d '{"q":"what have I been saving about set design?"}' | head -c 900`);
+console.log(`\nOr open it: ${BASE}/browse — flip the search toggle to "meaning".\n`);
