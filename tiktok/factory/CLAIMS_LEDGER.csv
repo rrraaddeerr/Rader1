@@ -1,0 +1,11 @@
+claim_id,posted,video,claim,by_when,source,check_date,status,receipt_video,notes
+S01-wallet,,slate-01 #1,"EU citizens can hold ID/licenses in a government digital wallet in every member state; physical wallet begins visibly shrinking",2027-06,"eIDAS 2.0 — Dec 2026 member-state deadline",2027-01,pending,,
+S01-glasses,,slate-01 #2,"Smart glasses pass 50M units/yr and become the default second screen; checking your phone in public starts looking dated",2030-01,"IDC Q1 2026: +167% YoY; Bloomberg Jan 2026: Meta doubling Ray-Ban output",2028-01,pending,,
+S01-dpp,,slate-01 #3,"New clothes sold in the EU carry a scannable Digital Product Passport; secondhand gets provenance receipts",2030-01,"EU ESPR — textile delegated acts ~2027, compliance ~2029",2028-06,pending,,
+S01-charger,,slate-01 #4,"The junk-cable drawer is functionally dead: one USB-C cable + one Qi2 pad runs everything you own",2030-01,"EU common-charger directive (in force); Qi2 adoption",2028-01,pending,,
+S01-carkey,,slate-01 #5,"Majority of new cars ship with phone-as-key (UWB) as the default; the metal key is a paid accessory",2030-01,"Car Connectivity Consortium Digital Key 3.0 adoption across major OEMs",2028-06,pending,,
+S01-cash,,slate-01 #6,"Cash falls under 10% of in-person transactions in Canada; some big chains quietly stop accepting it",2030-01,"Bank of Canada payment surveys trend; EU instant-payments mandate live 2025",2028-01,pending,,
+S01-receipt,,slate-01 #7,"Paper receipts become opt-in only at major retailers; thermal-paper bans spread beyond France",2030-01,"France ban on automatic paper receipts (2023) + retailer e-receipt rollouts",2027-06,pending,,
+S01-remote,,slate-01 #8,"TVs ship without a traditional remote; phone + voice is the default input",2030-01,"Streaming-first TV OS consolidation; remote-less set-top trend",2028-06,pending,,
+S01-earbuds,,slate-01 #9,"Earbuds are regulated health devices: hearing-aid mode + live translation standard in flagship buds",2030-01,"FDA cleared AirPods Pro hearing-aid feature (2024); live-translate shipping now",2027-06,pending,,
+S01-shelf,,slate-01 #10,"Paper price tags mostly gone at major grocers — e-ink shelf labels + dynamic pricing everywhere (and regulated)",2030-01,"Walmart e-ink shelf label rollout; dynamic-pricing legislation debates",2028-01,pending,,
