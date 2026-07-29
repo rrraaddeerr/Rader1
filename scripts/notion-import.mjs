@@ -114,11 +114,59 @@ function categoryFor(url, sourceApp) {
 
 // ------------------------------------------------------------------- load
 
-const rows = parseCsv(await readFile(home(REFS), "utf8").catch((e) => {
-  console.error(`Couldn't read ${REFS}: ${e.message}`);
+/**
+ * Notion nests its export: the download is a zip containing an
+ * ExportBlock-*.zip which contains the CSVs. Take the .zip directly rather
+ * than making anyone dig two levels down for a file with a 32-char id in
+ * its name.
+ */
+async function csvPathFrom(input) {
+  if (!input.toLowerCase().endsWith(".zip")) return input;
+
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { mkdtemp, readdir } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const run = promisify(execFile);
+
+  const dir = await mkdtemp(join(tmpdir(), "notion-export-"));
+  console.log(`Unpacking ${basename(input)} …`);
+  await run("unzip", ["-qq", "-o", input, "-d", dir]);
+
+  // Unpack any nested archives (ExportBlock-*.zip), one level is enough.
+  for (const entry of await readdir(dir)) {
+    if (entry.toLowerCase().endsWith(".zip")) {
+      await run("unzip", ["-qq", "-o", join(dir, entry), "-d", join(dir, "inner")]).catch(() => {});
+    }
+  }
+
+  const found = [];
+  const walk = async (d) => {
+    for (const e of await readdir(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) await walk(p);
+      else if (e.name.toLowerCase().endsWith(".csv")) found.push(p);
+    }
+  };
+  await walk(dir);
+
+  if (!found.length) {
+    console.error("No CSV inside that zip. Re-export from Notion with format CSV.");
+    process.exit(1);
+  }
+  // "_all.csv" is every row; the other is just the current view.
+  const pick = found.find((f) => f.endsWith("_all.csv")) || found[0];
+  console.log(`  found ${basename(pick)}`);
+  return pick;
+}
+
+const csvPath = await csvPathFrom(home(REFS));
+const rows = parseCsv(await readFile(csvPath, "utf8").catch((e) => {
+  console.error(`Couldn't read ${csvPath}: ${e.message}`);
   process.exit(1);
 }));
-console.log(`${rows.length} rows from ${basename(REFS)}`);
+console.log(`${rows.length} rows from ${basename(csvPath)}`);
 
 // Optional: pull recovered @handles in from the IG join so imported refs carry
 // author attribution and a taste axis from the start.
