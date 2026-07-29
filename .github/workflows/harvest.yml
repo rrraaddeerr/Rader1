@@ -1,0 +1,44 @@
+name: bna-harvest
+
+# Scrapes before/after candidates on GitHub's runners (full internet,
+# zero tokens, zero local setup) and commits the refreshed curation
+# gallery back to the branch it ran on.
+#
+# Trigger by hand: Actions tab -> bna-harvest -> Run workflow (pick branch).
+# The cron only takes effect once this file is on the default branch.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 12 * * 1,4" # Mon + Thu, noon UTC
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bna-harvest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Harvest candidates
+        run: node bna/harvest.mjs
+      - name: Commit refreshed gallery
+        run: |
+          git config user.name "bna-harvester"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bna/harvest/candidates.jsonl bna/harvest/curate.html
+          if git diff --cached --quiet; then
+            echo "no new candidates"
+          else
+            git commit -m "harvest: refresh curation gallery"
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi

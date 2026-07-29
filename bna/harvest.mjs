@@ -246,7 +246,12 @@ function buildGallery(candidates) {
 // ---------------- main ------------------------------------------------------
 mkdirSync(DIR, { recursive: true });
 const arg = process.argv[2];
-const existing = loadCandidates();
+let existing = loadCandidates();
+// a real harvest evicts leftover --demo placeholders
+if (arg !== "--demo" && existing.some((c) => c.id.startsWith("demo_"))) {
+  existing = existing.filter((c) => !c.id.startsWith("demo_"));
+  writeFileSync(JSONL, existing.map((c) => JSON.stringify(c)).join("\n") + (existing.length ? "\n" : ""));
+}
 const seen = new Set(existing.map((c) => c.id));
 let added = 0;
 

@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><title>b4/after — curate (0)</title><style>
+  :root{color-scheme:dark}
+  body{margin:0;background:#101014;color:#eee;font-family:system-ui,sans-serif}
+  header{position:sticky;top:0;background:#101014ee;padding:14px 20px;display:flex;gap:12px;align-items:center;border-bottom:1px solid #2a2a33;z-index:2;flex-wrap:wrap}
+  h1{font-size:18px;margin:0 12px 0 0}
+  button,select{background:#22222b;color:#eee;border:1px solid #3a3a45;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer}
+  button.primary{background:#3556d4;border-color:#3556d4}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding:20px}
+  .card{background:#191920;border:1px solid #2a2a33;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .card.keep{outline:3px solid #38b26b}.card.skip{opacity:.28}
+  .imgs{display:flex;gap:2px;background:#000;min-height:180px}
+  .imgs img{width:100%;min-width:0;object-fit:cover;max-height:260px;flex:1}
+  .pad{padding:12px 14px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .t{font-size:15px;line-height:1.3;font-weight:600}
+  .meta{font-size:12px;color:#9a9aa8;line-height:1.5}
+  .meta a{color:#7f9cff}
+  .row{display:flex;gap:8px;margin-top:auto}
+  .row button{flex:1}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#2a2a3a;margin-right:6px}
+  #count{color:#38b26b;font-weight:700}
+  </style><body>
+  <header><h1>b4/after curation</h1>
+    <select id="filter"><option value="">all sources</option><option>reddit</option><option>wikimedia</option><option>loc</option></select>
+    <select id="sfilter"><option value="">all series</option><option>timegap</option><option>restore</option><option>hypothetical</option><option>glowup-things</option><option>marine</option></select>
+    <span><span id="count">0</span> kept</span>
+    <button class="primary" onclick="exportCsv()">Export keeps → CSV</button>
+    <button onclick="if(confirm('Clear all keep/skip marks?')){localStorage.removeItem(KEY);render()}">Reset</button>
+  </header>
+  <div class="grid" id="grid"></div>
+  <script>
+  const DATA = [];
+  const KEY = "bna-curation";
+  const state = () => JSON.parse(localStorage.getItem(KEY) || "{}");
+  const setState = (s) => localStorage.setItem(KEY, JSON.stringify(s));
+  function mark(id, v){ const s = state(); s[id] = (s[id] === v ? undefined : v); setState(s); render(); }
+  function csvEsc(x){ x = String(x ?? ""); return '"' + x.replaceAll('"','""') + '"'; }
+  function exportCsv(){
+    const s = state();
+    const keeps = DATA.filter(d => s[d.id] === "keep");
+    if(!keeps.length) return alert("Nothing marked keep yet.");
+    const header = "id,series,source_type,hook,payoff,intent,caption,hashtags,credit,source_url";
+    const rows = keeps.map(d => [d.id, d.series, "scraped", d.title.slice(0,80), "", "TODO one true line", "", "#beforeandafter", d.credit + " (" + d.license + ")", d.url].map(csvEsc).join(","));
+    const blob = new Blob([header + "\n" + rows.join("\n") + "\n"], {type:"text/csv"});
+    const a = Object.assign(document.createElement("a"), {href: URL.createObjectURL(blob), download: "keeps.csv"});
+    a.click();
+  }
+  function render(){
+    const s = state(), f = document.getElementById("filter").value, sf = document.getElementById("sfilter").value;
+    document.getElementById("count").textContent = DATA.filter(d => s[d.id] === "keep").length;
+    document.getElementById("grid").innerHTML = DATA
+      .filter(d => (!f || d.source === f) && (!sf || d.series === sf))
+      .map(d => {
+        const imgs = d.before ? '<img loading="lazy" src="'+d.before+'"><img loading="lazy" src="'+(d.after||d.before)+'">'
+                              : '<img loading="lazy" src="'+(d.thumb||"")+'">';
+        return '<div class="card '+(s[d.id]||"")+'">'
+          + '<div class="imgs">'+imgs+'</div><div class="pad">'
+          + '<div><span class="badge">'+d.source+'</span><span class="badge">'+d.series+'</span>'+(d.score?'<span class="badge">▲'+d.score+'</span>':'')+'</div>'
+          + '<div class="t">'+d.title.replace(/</g,"&lt;")+'</div>'
+          + '<div class="meta">'+d.credit.replace(/</g,"&lt;")+' · '+d.license.replace(/</g,"&lt;")+'<br><a href="'+d.url+'" target="_blank">source ↗</a></div>'
+          + '<div class="row"><button onclick="mark(\''+d.id+'\',\'keep\')">✓ keep</button><button onclick="mark(\''+d.id+'\',\'skip\')">✗ skip</button></div>'
+          + '</div></div>';
+      }).join("");
+  }
+  document.getElementById("filter").onchange = render;
+  document.getElementById("sfilter").onchange = render;
+  render();
+  </script></body>

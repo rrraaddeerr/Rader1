@@ -1,4 +1,6 @@
 node_modules/
 out/
 assets/
-harvest/
+harvest/*
+!harvest/candidates.jsonl
+!harvest/curate.html
