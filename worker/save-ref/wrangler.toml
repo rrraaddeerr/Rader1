@@ -17,7 +17,7 @@ account_id = "e87845f0432428cd66fc37867b2cc01e"
 #   npx wrangler kv namespace create save-ref-kv
 [[kv_namespaces]]
 binding = "REFS_KV"
-id = "REPLACE_WITH_KV_ID"
+id = "e9c59ebc5134468bbb4b486a4261f2c2"
 
 # OPTIONAL — offload uploaded image/file bytes to R2 instead of KV (recommended
 # if you drop lots of large files; KV values are capped at 25 MB). Create with:
