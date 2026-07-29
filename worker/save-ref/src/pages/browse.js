@@ -66,6 +66,7 @@ export const BROWSE_HTML = /* html */ `<!doctype html>
   <div class="top">
     <h1>🧠 Gallery</h1>
     <a href="/drop">+ Drop</a>
+    <a href="/brief">Brief</a>
     <a href="/queue">Queue</a>
     <a href="/shortcuts">iPhone</a>
     <input id="q" type="text" placeholder="Search title, host, tags, notes…">

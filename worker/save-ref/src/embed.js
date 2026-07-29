@@ -23,7 +23,7 @@ export const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
 const META_TITLE_MAX = 180;
 
 /** Vectorize rejects topK above this when returnMetadata is "all". */
-const METADATA_TOPK_MAX = 20;
+export const METADATA_TOPK_MAX = 20;
 
 /**
  * Compose the text that represents a ref in the index.

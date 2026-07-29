@@ -55,6 +55,29 @@ index_name = "bigbrain-inventory"
 # [vars]
 # ANTHROPIC_MODEL = "claude-sonnet-5"
 
+# ---------------------------------------------------------------- the nightly
+# src/cron.js — bounded overnight maintenance (dead links, realm proposals,
+# missing embeddings, enrichment, rationed vision captions). Designed to cost
+# about two cents; the $5/night ceiling in src/budget.js is the backstop.
+#
+# Cron is ALWAYS UTC and never shifts for daylight saving, so the conversion is
+# fixed once and drifts by an hour twice a year on purpose:
+#
+#   11:10 UTC = 04:10 Vancouver in summer (PDT, UTC-7)
+#             = 03:10 Vancouver in winter (PST, UTC-8)
+#
+# Both land in the dead of the early morning, and the run record is written
+# hours before he opens the morning brief.
+#
+# Why not on the hour: :00 is the busiest minute on Cloudflare's scheduler and
+# a cron there can start several minutes late.
+#
+# Why 11:10 and not later: the Prospector sweep already runs nightly at 12:30
+# UTC. This finishes with well over an hour of clear water before it starts, so
+# the two never contend for subrequests or for the same budget ledger.
+[triggers]
+crons = ["10 11 * * *"]
+
 # AUTH_TOKEN is a secret, never committed. Set it with:
 #   openssl rand -hex 32           # copy the output -> this is your Big Brain token
 #   npx wrangler secret put AUTH_TOKEN

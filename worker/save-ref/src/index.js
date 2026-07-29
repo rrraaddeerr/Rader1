@@ -17,6 +17,12 @@
  *   POST   /api/import  -> bulk insert refs        (auth)
  *   GET    /blob/:key   -> raw bytes for an upload (public; key is unguessable)
  *   GET    /shortcuts   -> iOS Shortcuts setup guide
+ *   GET    /brief       -> the morning brief page
+ *
+ * Free maintenance (Tier 0 — no model, no index write; works with no bindings)
+ *   POST   /api/thumbs           -> backfill missing og:image thumbnails
+ *   POST   /api/propose          -> fill the swipe queue with proposals
+ *   GET    /api/propose/preview  -> the same pass, queueing nothing
  *
  * The brain (needs the AI + VECTORS bindings; everything above works without them)
  *   POST   /api/search      -> semantic search over your refs
@@ -25,8 +31,15 @@
  *   GET    /api/profile     -> your taste fingerprint (future-outfit reads this)
  *   POST   /api/match       -> "do I have anything like this?" vs rent.co inventory
  *   POST   /api/set-draft   -> draft a client Set from a brief
+ *   GET    /api/gaps        -> what he keeps saving that he can't rent out
  *   POST   /api/reindex     -> (re)build embeddings for everything already saved
  *   POST   /api/inventory/index -> load rent.co inventory into the item index
+ *
+ * The nightly (src/cron.js, also on a [triggers] cron in wrangler.toml)
+ *   GET    /api/brief        -> what landed, what's waiting, what it cost
+ *   POST   /api/nightly/run  -> run the maintenance pass now
+ *   GET    /api/nightly      -> the last few nights
+ *   GET    /api/nightly/:day -> one night's record (YYYY-MM-DD)
  *
  * Storage (bound KV namespace REFS_KV)
  *   ref:<id>     -> ref object JSON. id = reverse-timestamp + rand, so a plain
@@ -41,7 +54,7 @@
 
 import { categorize, ALL_CATEGORIES, parseUrl } from "./categorize.js";
 import { fetchMeta } from "./og.js";
-import { enrichRef } from "./enrich.js";
+import { enrichRef, backfillImages, recoverImage } from "./enrich.js";
 import {
   brainReady,
   indexRef,
@@ -57,10 +70,15 @@ import { matchArchive, draftSet } from "./rentco.js";
 import { classify, titleFor, summarize, REALMS } from "./realm.js";
 import * as queue from "./stage.js";
 import { quote, ledger } from "./budget.js";
+import { runProposalPass } from "./propose.js";
+import { findGaps } from "./gaps.js";
+import { buildBrief } from "./brief.js";
+import { runNightly, readRun, recentRuns } from "./cron.js";
 import { DROP_HTML } from "./pages/drop.js";
 import { BROWSE_HTML } from "./pages/browse.js";
 import { SHORTCUTS_HTML } from "./pages/shortcuts.js";
 import { QUEUE_HTML } from "./pages/queue.js";
+import { BRIEF_HTML } from "./pages/brief.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -181,6 +199,7 @@ export default {
       if (path === "/browse" && request.method === "GET") return html(BROWSE_HTML);
       if (path === "/shortcuts" && request.method === "GET") return html(SHORTCUTS_HTML);
       if (path === "/queue" && request.method === "GET") return html(QUEUE_HTML);
+      if (path === "/brief" && request.method === "GET") return html(BRIEF_HTML);
       if (path === "/health") {
         return json({
           ok: true,
@@ -217,6 +236,32 @@ export default {
         const fail = requireToken(request, env);
         if (fail) return fail;
         return await handleList(env, url);
+      }
+
+      // ---- POST /api/ref/:id/thumb ----
+      // Repair one ref's thumbnail. Matched before /api/ref/:id below, which
+      // would otherwise read the id as "<id>/thumb" — same ordering rule as
+      // /api/queue/stats ahead of /api/queue/:id. Always retries: asking for
+      // this one ref by name is the retry, and the bulk route's retry=1 would
+      // re-fetch all 1,575 to fix it.
+      if (path.startsWith("/api/ref/") && path.endsWith("/thumb") && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const id = decodeURIComponent(path.slice("/api/ref/".length, -"/thumb".length));
+        if (!id) return json({ ok: false, error: "Missing id" }, 400);
+        const ref = await env.REFS_KV.get(`ref:${id}`, "json");
+        if (!ref) return json({ ok: false, error: "Not found" }, 404);
+        const patch = await recoverImage(ref, { retry: true });
+        // No patch means there was nothing to look for — no url, or its own
+        // uploaded bytes already outrank anything we could scrape.
+        if (!Object.keys(patch).length) {
+          return json({ ok: true, ref, changed: false, why: ref.blobKey ? "blob" : "no url" });
+        }
+        const updated = { ...ref, ...patch };
+        await env.REFS_KV.put(`ref:${id}`, JSON.stringify(updated));
+        // No re-index on purpose: `image` is in neither embedTextFor() nor the
+        // vector metadata, so the embedding is unchanged.
+        return json({ ok: true, ref: updated, changed: Boolean(patch.image), why: updated.imageWhy || "og" });
       }
 
       // ---- /api/ref/:id ----
@@ -358,6 +403,40 @@ export default {
         return json(out, out.ok ? 200 : 400);
       }
 
+      // POST /api/propose — fill the swipe queue. Proposes only; nothing applies.
+      // Tier 0 throughout, so no BRAIN_OFF gate: dead links, keyword tags and
+      // weak realms are all deterministic and want no AI or Vectorize binding.
+      if (path === "/api/propose" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await runProposalPass(env, {
+          limit: clamp(body.limit ?? url.searchParams.get("limit"), 50, 200),
+          kinds: Array.isArray(body.kinds)
+            ? body.kinds
+            : (url.searchParams.get("kinds") || "").split(",").filter(Boolean),
+          cursor: body.cursor || url.searchParams.get("cursor") || undefined,
+          linkLimit: body.linkLimit,
+          dryRun: truthy(body.dryRun ?? url.searchParams.get("dry")),
+        });
+        return json(out, out.ok ? 200 : 400);
+      }
+
+      // GET /api/propose/preview — the same pass, queueing nothing. A GET so it
+      // opens in a browser or an iOS Shortcut, which is the point: read the
+      // whole pass before a single card exists in the queue.
+      if (path === "/api/propose/preview" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await runProposalPass(env, {
+          limit: clamp(url.searchParams.get("limit"), 25, 200),
+          kinds: (url.searchParams.get("kinds") || "").split(",").filter(Boolean),
+          cursor: url.searchParams.get("cursor") || undefined,
+          dryRun: true,
+        });
+        return json(out, out.ok ? 200 : 400);
+      }
+
       // POST /api/classify — Tier 0 realm classification, free, no model call
       if (path === "/api/classify" && request.method === "POST") {
         const fail = requireToken(request, env);
@@ -392,6 +471,61 @@ export default {
             vision: truthy(url.searchParams.get("vision")),
           }),
         });
+      }
+
+      // GET /api/brief — what landed, what's waiting, what it cost. Cached for
+      // six hours; ?refresh=1 rebuilds, ?deep=1 writes the synthesis with Claude.
+      // ok is false only when REFS_KV is unbound — there's nothing to brief on.
+      if (path === "/api/brief" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await buildBrief(env, {
+          deep: truthy(url.searchParams.get("deep")),
+          refresh: truthy(url.searchParams.get("refresh")),
+        });
+        return json(out, out.ok ? 200 : 503);
+      }
+
+      // ---- the nightly ---------------------------------------------------
+      // Same jobs the cron runs at 11:10 UTC, on demand. See src/cron.js.
+
+      // POST /api/nightly/run {dryRun, jobs, limits, retry} — run it now
+      if (path === "/api/nightly/run" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await runNightly(env, ctx, {
+          dryRun: truthy(body.dryRun ?? url.searchParams.get("dry")),
+          jobs: Array.isArray(body.jobs) ? body.jobs : undefined,
+          limits: body.limits && typeof body.limits === "object" ? body.limits : undefined,
+          retry: truthy(body.retry ?? url.searchParams.get("retry")),
+        });
+        return json(out, out.ok ? 200 : 503);
+      }
+
+      // GET /api/nightly — the last few nights, newest first. `error` is
+      // non-null only when KV failed, and no runs plus an error is not an
+      // idle week — surface both rather than letting [] tell the story.
+      if (path === "/api/nightly" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const { runs, error } = await recentRuns(env, {
+          limit: clamp(url.searchParams.get("limit"), 7, 60),
+        });
+        return json({ ok: true, runs, count: runs.length, error });
+      }
+
+      // GET /api/nightly/:day — one night's record. After the two exact paths
+      // above, the same way /api/queue/stats is matched before /api/queue/:id.
+      if (path.startsWith("/api/nightly/") && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const day = decodeURIComponent(path.slice("/api/nightly/".length));
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+          return json({ ok: false, error: "Expected a day as YYYY-MM-DD" }, 400);
+        }
+        const run = await readRun(env, day);
+        return run ? json({ ok: true, run }) : json({ ok: false, error: "No run recorded" }, 404);
       }
 
       // ---- the brain ----------------------------------------------------
@@ -500,6 +634,58 @@ export default {
         return json(out, out.ok ? 200 : 400);
       }
 
+      // GET /api/gaps — what he keeps saving that he can't rent out.
+      // findGaps() never throws and reports its own missing bindings with a
+      // reason, so it does its own gating rather than sharing BRAIN_OFF: the
+      // useful message here names INV_VECTORS, not the refs index.
+      if (path === "/api/gaps" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await findGaps(env, {
+          sample: clamp(url.searchParams.get("sample"), 60, 150),
+          topK: clamp(url.searchParams.get("topK"), 3, 20),
+          threshold: Number(url.searchParams.get("threshold")) || undefined,
+          sim: Number(url.searchParams.get("sim")) || undefined,
+          minSize: clamp(url.searchParams.get("minSize"), 1, 50),
+          cursor: url.searchParams.get("cursor") || undefined,
+          deep: truthy(url.searchParams.get("deep")),
+        });
+        return json(out, out.ok ? 200 : 503);
+      }
+
+      // POST /api/gaps {sample, threshold, topK, sim, minSize, cursor, deep}
+      // deep stays opt-in on both verbs — it's the only path that spends tier 3.
+      if (path === "/api/gaps" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await findGaps(env, {
+          sample: clamp(body.sample, 60, 150),
+          topK: clamp(body.topK, 3, 20),
+          threshold: Number(body.threshold) || undefined,
+          sim: Number(body.sim) || undefined,
+          minSize: clamp(body.minSize, 1, 50),
+          cursor: body.cursor || undefined,
+          deep: truthy(body.deep),
+        });
+        return json(out, out.ok ? 200 : 503);
+      }
+
+      // POST /api/thumbs — put a thumbnail on every ref missing one.
+      // Deliberately not /api/reindex?deep=1: an image is in neither the
+      // embedding text nor the vector metadata, so this touches no model and no
+      // index. Tier 0, free, and ungated for the same reason — it needs no AI.
+      if (path === "/api/thumbs" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await backfillImages(env, {
+          cursor: url.searchParams.get("cursor") || undefined,
+          batch: clamp(url.searchParams.get("batch"), 25, 100),
+          retry: truthy(url.searchParams.get("retry")),
+        });
+        return json(out, out.ok ? 200 : 500);
+      }
+
       // POST /api/reindex — backfill embeddings for everything already saved
       if (path === "/api/reindex" && request.method === "POST") {
         const fail = requireToken(request, env);
@@ -526,6 +712,18 @@ export default {
     } catch (err) {
       return json({ ok: false, error: String(err?.message ?? err) }, 500);
     }
+  },
+
+  /**
+   * The nightly maintenance pass — see the [triggers] block in wrangler.toml.
+   *
+   * waitUntil keeps the invocation alive for the whole run: a scheduled handler
+   * that returns early has its work cancelled mid-flight, which for this job
+   * would mean a half-written run record and refs marked tried that never were.
+   * runNightly() never throws, and reports its own errors into that record.
+   */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runNightly(env, ctx, { now: new Date(event.scheduledTime) }));
   },
 };
 
