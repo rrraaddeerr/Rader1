@@ -9,7 +9,7 @@ import {
   parseTranscriptXml,
 } from "../src/enrich.js";
 import { embedTextFor, embedTextForItem, brainReady, inventoryReady } from "../src/embed.js";
-import { buildContext, sourceOf, parseJsonish } from "../src/ask.js";
+import { buildContext, sourceOf, parseJsonish, callCheap, CHEAP_MODELS } from "../src/ask.js";
 
 let pass = 0, fail = 0;
 function ok(label, cond) { cond ? pass++ : (fail++, console.error("✗ " + label)); }
@@ -146,6 +146,35 @@ eq("no json -> null", parseJsonish("just prose"), null);
 eq("broken json -> null", parseJsonish("{not json}"), null);
 eq("empty -> null", parseJsonish(""), null);
 eq("non-string -> null", parseJsonish(null), null);
+
+// ---- chat model fallback ----
+// Workers AI model ids get renamed; one bad id must not look like "no model".
+const tried = [];
+const flakyAI = {
+  async run(model) {
+    tried.push(model);
+    if (model === CHEAP_MODELS[0]) throw new Error("No such model");
+    if (model === CHEAP_MODELS[1]) return { response: "   " }; // empty
+    return { response: "an answer" };
+  },
+};
+const fell = await callCheap({ AI: flakyAI }, { system: "s", user: "u" });
+eq("falls past a dead model id", fell.text, "an answer");
+eq("reports which model answered", fell.model, CHEAP_MODELS[2]);
+eq("tried them in order", tried.length, 3);
+ok("kept the failure reason", fell.errors[0].includes("No such model"));
+ok("treats an empty response as a failure", fell.errors[1].includes("empty response"));
+
+const noAI = await callCheap({}, { system: "s", user: "u" });
+eq("no AI binding is explicit", noAI.text, null);
+ok("and says so", noAI.errors[0].includes("AI binding missing"));
+
+const allDead = await callCheap(
+  { AI: { async run() { throw new Error("gone"); } } },
+  { system: "s", user: "u" }
+);
+eq("all models dead -> null", allDead.text, null);
+eq("one error per candidate", allDead.errors.length, CHEAP_MODELS.length);
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

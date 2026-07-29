@@ -14,7 +14,20 @@
 
 import { searchRefs } from "./embed.js";
 
-export const CHEAP_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+/**
+ * Workers AI model ids move around — a model that existed when this was
+ * written can be renamed or retired, and the failure looks identical to "no
+ * model bound". So try a list rather than betting on one string, and report
+ * what each one said when none of them work.
+ */
+export const CHEAP_MODELS = [
+  "@cf/meta/llama-3.1-8b-instruct",
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "@cf/meta/llama-3-8b-instruct",
+  "@cf/meta/llama-2-7b-chat-int8",
+  "@cf/mistral/mistral-7b-instruct-v0.1",
+];
+export const CHEAP_MODEL = CHEAP_MODELS[0];
 export const DEEP_MODEL = "claude-sonnet-5";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -124,35 +137,55 @@ export async function callClaude(env, { system, user, maxTokens = 1200 }) {
   }
 }
 
-/** Call the cheap Workers AI model. Returns text or null. */
+/**
+ * Call a Workers AI chat model, trying each candidate until one answers.
+ *
+ * Errors are collected rather than swallowed: a wrong model id and an unbound
+ * AI produce the same empty answer otherwise, which is impossible to debug
+ * from the outside.
+ *
+ * @returns {Promise<{text:string|null, model:string, errors:string[]}>}
+ */
 export async function callCheap(env, { system, user, maxTokens = 900 }) {
-  if (!env?.AI) return null;
-  try {
-    const res = await env.AI.run(env.CHEAP_MODEL || CHEAP_MODEL, {
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      max_tokens: maxTokens,
-    });
-    const text = typeof res === "string" ? res : res?.response ?? "";
-    return String(text).trim() || null;
-  } catch {
-    return null;
+  if (!env?.AI) return { text: null, model: "none", errors: ["AI binding missing"] };
+
+  // An explicit override goes first, then the known-good list.
+  const candidates = [...new Set([env.CHEAP_MODEL, ...CHEAP_MODELS].filter(Boolean))];
+  const errors = [];
+
+  for (const model of candidates) {
+    try {
+      const res = await env.AI.run(model, {
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        max_tokens: maxTokens,
+      });
+      const text = typeof res === "string" ? res : res?.response ?? "";
+      const trimmed = String(text).trim();
+      if (trimmed) return { text: trimmed, model, errors };
+      errors.push(`${model}: empty response`);
+    } catch (err) {
+      errors.push(`${model}: ${String(err?.message ?? err).slice(0, 160)}`);
+    }
   }
+  return { text: null, model: "none", errors };
 }
 
 /**
- * Generate with the requested tier, falling back cheap -> nothing.
- * @returns {Promise<{text:string|null, model:string}>}
+ * Generate with the requested tier, falling back deep -> cheap -> nothing.
+ * @returns {Promise<{text:string|null, model:string, errors:string[]}>}
  */
 export async function generate(env, { system, user, deep = false, maxTokens }) {
+  const errors = [];
   if (deep) {
     const text = await callClaude(env, { system, user, maxTokens });
-    if (text) return { text, model: env.ANTHROPIC_MODEL || DEEP_MODEL };
+    if (text) return { text, model: env.ANTHROPIC_MODEL || DEEP_MODEL, errors };
+    errors.push(env.ANTHROPIC_API_KEY ? "claude call failed" : "no ANTHROPIC_API_KEY, fell back to cheap");
   }
-  const text = await callCheap(env, { system, user, maxTokens });
-  return { text, model: text ? env.CHEAP_MODEL || CHEAP_MODEL : "none" };
+  const out = await callCheap(env, { system, user, maxTokens });
+  return { ...out, errors: [...errors, ...out.errors] };
 }
 
 /**
@@ -179,12 +212,17 @@ export async function askBrain(env, question, { deep = false, topK = 10, categor
   const context = buildContext(refs);
   const user = `CONTEXT — ${refs.length} references from the archive:\n\n${context}\n\nQUESTION: ${q}`;
 
-  const { text, model } = await generate(env, { system: SYSTEM_PROMPT, user, deep });
+  const { text, model, errors } = await generate(env, { system: SYSTEM_PROMPT, user, deep });
   return {
     ok: true,
-    answer: text || "The retrieval worked but no model is bound — add the Workers AI binding to get answers.",
+    answer:
+      text ||
+      "Retrieval worked — the sources below are real matches — but no chat model would answer. " +
+        "See `debug` for what each model said.",
     sources: refs.map(sourceOf),
     model,
+    // Only present when something went wrong; silence on the happy path.
+    ...(text ? {} : { debug: errors }),
   };
 }
 
