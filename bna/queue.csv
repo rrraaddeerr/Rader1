@@ -1,0 +1,11 @@
+id,series,source_type,hook,payoff,intent,caption,hashtags
+t001,timegap,archive,"This corner of Vancouver, 1948","Same corner. 77 years later.","The tram tracks are still under the asphalt — they never dug them up.","Same corner, 77 years apart. The tracks are still under there.","#beforeandafter #vancouver #thennow #history"
+t002,timegap,archive,"A Kodak moment, 1962","The same beach today","Erosion moved this shoreline 40 meters. Your grandkids get a different beach.","One beach, 60 years. It moved.","#beforeandafter #thennow #nature"
+t003,timegap,archive,"Times Square, 1957","Times Square, this year","Every sign in the old photo was hand-painted. Every sign today is a screen.","Hand-painted → pixels. 68 years.","#beforeandafter #nyc #thennow"
+r001,restore,ai,"$40 yard-sale chair","After 6 hours of work","Real restorers say the finish underneath tells you the decade — this lacquer says 1940s.","Six hours. Forty bucks. 1940s bones.","#beforeandafter #restoration #satisfying"
+r002,restore,ai,"Rusted through, headed for scrap","Back on the road","Every panel here is original — restoration beats replacement when the steel's honest.","Scrap to street.","#beforeandafter #carrestoration #satisfying"
+r003,restore,ai,"This sneaker was white once","White again","The sole yellowing is oxidation — UV does it, and UV undoes it too.","Chemistry, not magic.","#beforeandafter #sneakers #restoration #satisfying"
+h001,hypothetical,ai,"Your street today","Your street if cars never existed","Cities before cars had 3x the street trees — the space went to parking.","No cars. Where does the space go?","#beforeandafter #whatif #cities"
+h002,hypothetical,ai,"An abandoned mall, today","The same mall, reclaimed","Dead malls are becoming housing in 30+ US cities right now — this is a real trend, not a render.","Dead mall → alive again.","#beforeandafter #whatif #urbex"
+g001,glowup-things,ai,"A $3 thrift find","Styled like it costs $300","Styling is 90% proportion — the garment barely matters.","Three dollars. Proportion did the rest.","#beforeandafter #thrift #styling #fashion"
+m001,marine,archive,"This shipwreck in 1975","The same wreck today","Fifty years underwater turns steel into a reef — this hull hosts 40+ species now.","Steel → reef. The ocean renovates everything.","#beforeandafter #ocean #shipwreck #marine"
