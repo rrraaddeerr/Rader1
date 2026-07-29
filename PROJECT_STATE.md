@@ -146,7 +146,18 @@ respond Approve / Maybe / Pass per item. Real-time tally back to operator.
   - `NEXT_PUBLIC_RENTCO_SETS_URL` — same as RENTCO_SETS_URL (used by client
     code on /set/[slug] to POST responses)
 
-## Big Brain (reference archive + taste layer)
+## Big Brain (reference archive + taste layer) — LIVE
+
+- **Deployed:** `https://save-ref-v2.raderturner-e87.workers.dev`
+  (`/drop` · `/browse` · `/queue` · `/shortcuts`)
+- **Loaded:** 1,578 refs imported from Notion, 1,575 embedded.
+- **Both tiers on:** Workers AI for search and quick answers, Claude via
+  `ANTHROPIC_API_KEY` for synthesis. The gap between them is large enough to
+  matter — the cheap model lists, Claude reads.
+- **Still to do:** `npm run index-inventory` (590 rent.co items, for
+  "do I have anything like this?"), and the IG join, which needs a *fresh*
+  Instagram export — the April one predates most of the archive.
+
 
 The drop-anything reference inbox at `worker/save-ref/`, now with an LLM layer
 over it. Not a trained model — **RAG**: every ref is embedded into Cloudflare
