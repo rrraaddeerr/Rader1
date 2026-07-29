@@ -1192,7 +1192,7 @@ const CREW_NOTE={
 };
 
 /* ---------- state ---------- */
-function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
+function load(){const d={saved:[],decoded:[],asked:[],quests:[],vibe:null,learnedThrift:false,claimed:[],lostFlip:[],thanks:[],fits:[],avatar:null,phoned:[],credits:0,creditLog:[],given:0,shared:false,addedFriends:[],flair:"🛹",ownedFlairs:["🛹"],name:"",isGrownUp:false,familyName:"",familyCode:"",campResponses:[],myCloset:[],myOutfits:[],cards:[],measurements:{},skin:"chrome",skinPicked:false,customSkins:[],boards:[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}]};const defBoards=()=>[{id:"b1",name:"My Picks",pins:[]},{id:"b2",name:"Dream Fits",pins:[]},{id:"b3",name:"Icons",pins:[]}];try{const s=JSON.parse(localStorage.getItem(KEY));if(s){const m=Object.assign(d,s);if(!Array.isArray(m.boards)||!m.boards.length)m.boards=defBoards();if(!Array.isArray(m.cards))m.cards=[];if(!m.skinPicked&&(m.skin==="molten"||!m.skin))m.skin="chrome";return m;}}catch(e){}return d;}
 function save(){state.updatedAt=Date.now();localStorage.setItem(KEY,JSON.stringify(state));cloudPushSoon();}
 let state=load();
 
@@ -1739,10 +1739,259 @@ function pickHue(i){return FAM_HUES[((i||0)%FAM_HUES.length+FAM_HUES.length)%FAM
 function renderFamilyBox(){
   const box=$("#familyBox"); if(!box)return;
   const n=getAdults().length+getCrew().length+allFriends().length;
+  const nr=(state.campResponses||[]).length;
   box.innerHTML=`<button class="teaser" id="goFamily" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
     <span class="ti">👪</span>
-    <div><b>My family &amp; pals</b><div style="color:var(--ink-soft);font-size:13px">${n} ${n===1?"person":"people"} you can ask, phone or get fits from — add, rename or remove anyone. <b style="color:var(--ink)">Open →</b></div></div></button>`;
+    <div><b>My family &amp; pals</b><div style="color:var(--ink-soft);font-size:13px">${n} ${n===1?"person":"people"} you can ask, phone or get fits from — add, rename or remove anyone. <b style="color:var(--ink)">Open →</b></div></div></button>`
+    + `<button class="teaser" id="goBoard" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    <span class="ti">💬</span>
+    <div><b>${state.familyName?esc(state.familyName)+" Board":"Family Board"}</b><div style="color:var(--ink-soft);font-size:13px">One group chat for the whole family — everyone sees it, no private DMs. ${state.familyCode?`<b style="color:var(--ink)">Open →</b>`:`<b style="color:var(--ink)">Set it up →</b>`}</div></div></button>`
+    + (state.isGrownUp?`<button class="teaser" id="goInvite" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    <span class="ti">📷</span>
+    <div><b>Invite the family</b><div style="color:var(--ink-soft);font-size:13px">A scan-to-join QR + link for a big family day — get everyone on fast. <b style="color:var(--ink)">Show →</b></div></div></button>
+    <button class="teaser" id="goCamp" style="width:100%;text-align:left;cursor:pointer;margin-top:10px">
+    <span class="ti">📋</span>
+    <div><b>Family sign-up &amp; feedback</b><div style="color:var(--ink-soft);font-size:13px">Pass your phone around — everyone adds themselves &amp; answers a few quick Qs. Works with no signal.${nr?` <b style="color:var(--ink)">${nr} so far →</b>`:` <b style="color:var(--ink)">Start →</b>`}</div></div></button>`:"");
   $("#goFamily").onclick=openFamily;
+  {const gc=$("#goCamp");if(gc)gc.onclick=openCampSignup;}
+  {const bd=$("#goBoard");if(bd)bd.onclick=openFamilyBoard;}
+  {const gi=$("#goInvite");if(gi)gi.onclick=openInvite;}
+}
+
+/* ---------- Family sign-up & feedback: pass-the-phone questionnaire ----------
+   Great for a big family day. Each person adds themselves + answers a few quick
+   questions. Everything saves ON THIS PHONE (works with zero signal at camp) and
+   syncs to the cloud later. Kid-safe: first names + style only, never emails/phones. */
+const CAMP_VIBES=[["street","🧢 Street"],["avant","🖤 Avant"],["future","🛰️ Techy"],["maker","🧵 Maker"],["mix","✨ A mix"]];
+const CAMP_Q=[
+  {k:"react",q:"First reaction to Future Outfit?",opts:[["love","😍 Love it"],["like","🙂 Like it"],["meh","😐 It's okay"],["nah","🤷 Not for me"]]},
+  {k:"use",q:"Would you actually use it?",opts:[["yes","✅ Yes"],["maybe","🤔 Maybe"],["no","🚫 No"]]},
+  {k:"whats",q:"Use it to keep the family in touch — instead of WhatsApp?",opts:[["yes","✅ Yes"],["maybe","🤔 Maybe"],["no","🚫 Nah"]]},
+];
+let campPick;
+function openCampSignup(){
+  campPick={who:"kid",vibe:"mix",react:null,use:null,whats:null};
+  const lab='font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900';
+  const ist='width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:13px;font:inherit;color:var(--ink)';
+  const chips=(id,arr,sel)=>`<div class="filters" id="${id}">${arr.map(o=>`<button class="chip" data-v="${o[0]}" aria-pressed="${o[0]===sel}">${o[1]}</button>`).join("")}</div>`;
+  const n=(state.campResponses||[]).length;
+  $("#sheetPad").innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:22px;font-weight:900">Sign-up 📋</h2>
+      ${n?`<button class="btn alt" id="campSee" style="width:auto;padding:8px 12px;font-size:13px">📊 ${n}</button>`:""}
+    </div>
+    <p style="color:var(--ink-soft);margin:6px 0 4px">Pass the phone to the next person — 30 seconds. <b>${esc(state.familyName||"The family")}</b> 💛</p>
+    <div class="safe-note">🛡️ <div>Just a first name &amp; opinions — <b>no emails or phone numbers</b>. Saved on this phone; works with no signal.</div></div>
+    <div class="lab" style="${lab};margin:14px 0 6px">Your name</div>
+    <input id="cName" maxlength="24" placeholder="e.g. Andre" style="${ist}">
+    <div class="lab" style="${lab};margin:14px 0 6px">You're a…</div>
+    ${chips("cWho",[["grown","🧑 Grown-up"],["kid","🛹 Kid"]],"kid")}
+    <div class="lab" style="${lab};margin:14px 0 6px">Your style vibe</div>
+    ${chips("cVibe",CAMP_VIBES,"mix")}
+    ${CAMP_Q.map(q=>`<div class="lab" style="${lab};margin:16px 0 6px">${esc(q.q)}</div>${chips("cq_"+q.k,q.opts,"")}`).join("")}
+    <div class="lab" style="${lab};margin:16px 0 6px">One thing that would make you use it?</div>
+    <textarea id="cWish" placeholder="…anything" style="width:100%;min-height:70px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font:inherit;color:var(--ink)"></textarea>
+    <button class="btn" id="cSave" style="margin-top:16px">Save &amp; next person →</button>`;
+  const wire=(id,key)=>$$("#"+id+" .chip").forEach(b=>b.onclick=()=>{campPick[key]=b.dataset.v;$$("#"+id+" .chip").forEach(x=>x.setAttribute("aria-pressed",x===b));});
+  wire("cWho","who"); wire("cVibe","vibe"); CAMP_Q.forEach(q=>wire("cq_"+q.k,q.k));
+  {const cs=$("#campSee");if(cs)cs.onclick=openCampResults;}
+  $("#cSave").onclick=()=>{
+    const name=($("#cName").value||"").trim();
+    if(!name){toast("Pop your name in 🙂");return;}
+    const r={name:name.slice(0,24),who:campPick.who,vibe:campPick.vibe,react:campPick.react,use:campPick.use,whats:campPick.whats,wish:($("#cWish").value||"").trim().slice(0,200),when:Date.now()};
+    state.campResponses=state.campResponses||[]; state.campResponses.push(r);
+    const sp=(r.vibe&&r.vibe!=="mix")?r.vibe:"street";
+    if(r.who==="grown"){ state.adults=state.adults||[]; state.adults.push({id:"ua"+Date.now(),name:r.name,rel:"Family",hue:pickHue(state.adults.length)}); }
+    else { state.friends=state.friends||[]; state.friends.push({id:"uf"+Date.now(),name:r.name,rel:"Family",emoji:SPEC_EMOJI[sp]||"🙂",spec:sp,helps:0,hue:SPEC_HUE[sp]||"linear-gradient(135deg,#ff7ac3,#9b6bff)"}); }
+    save();refreshQuests();
+    toast(`Thanks ${r.name.split(" ")[0]}! Pass it on 💛`);
+    openCampSignup();
+  };
+  openSheet();
+}
+function openCampResults(){
+  const rs=state.campResponses||[];
+  const tally=(key,vals)=>vals.map(v=>({v,n:rs.filter(r=>r[key]===v).length}));
+  const bar=(rows,colors)=>rows.map((x,i)=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="width:58px;font-size:12px;color:var(--ink-soft);text-transform:capitalize">${x.v}</span><div style="flex:1;height:16px;background:var(--panel-2);border-radius:8px;overflow:hidden"><div style="height:100%;width:${rs.length?Math.round(x.n/rs.length*100):0}%;background:${colors[i]}"></div></div><span style="width:22px;text-align:right;font-weight:800;font-size:13px">${x.n}</span></div>`).join("");
+  const hl='font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-dim);font-weight:900';
+  const wishes=rs.filter(r=>r.wish).slice(-8).reverse();
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:22px;font-weight:900">Feedback so far 📊</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 12px"><b>${rs.length}</b> ${rs.length===1?"person":"people"} from ${esc(state.familyName||"the family")}.</p>
+    ${rs.length?`
+    <div class="lab" style="${hl};margin:6px 0 8px">First reaction</div>
+    ${bar(tally("react",["love","like","meh","nah"]),["#2ecf8f","#46d6ff","#ffb25f","#ff5e7e"])}
+    <div class="lab" style="${hl};margin:14px 0 8px">Would use it</div>
+    ${bar(tally("use",["yes","maybe","no"]),["#2ecf8f","#ffb25f","#ff5e7e"])}
+    <div class="lab" style="${hl};margin:14px 0 8px">Instead of WhatsApp?</div>
+    ${bar(tally("whats",["yes","maybe","no"]),["#2ecf8f","#ffb25f","#ff5e7e"])}
+    ${wishes.length?`<div class="lab" style="${hl};margin:16px 0 8px">Wishes</div>${wishes.map(r=>`<div class="know" style="margin-bottom:6px">💬 <b>${esc(r.name.split(" ")[0])}:</b> "${esc(r.wish)}"</div>`).join("")}`:""}
+    <div class="btnrow" style="margin-top:16px"><button class="btn alt" id="crCopy">📋 Copy all</button><button class="btn" id="crBack">Add another</button></div>
+    `:`<div class="empty"><div class="big">📋</div>No answers yet.<br>Pass the phone around to start.</div><button class="btn" id="crBack" style="margin-top:12px">Start sign-up</button>`}`;
+  {const cb=$("#crBack");if(cb)cb.onclick=openCampSignup;}
+  const cp=$("#crCopy");
+  if(cp)cp.onclick=()=>{
+    const txt=`FUTURE OUTFIT — ${state.familyName||"family"} feedback (${rs.length})\n\n`+rs.map(r=>`${r.name} (${r.who}) · react:${r.react||"-"} use:${r.use||"-"} whatsApp:${r.whats||"-"}${r.wish?` · "${r.wish}"`:""}`).join("\n");
+    if(navigator.clipboard)navigator.clipboard.writeText(txt);
+    toast("Copied — paste it anywhere 📋");
+  };
+  openSheet();
+}
+
+/* ---------- Family Board: ONE group thread for the whole family ----------
+   GROUP-ONLY by design. Everyone in the family sees every message; there are NO
+   private messages and no way to DM an individual — so no kid can be messaged on
+   their own. The shared family code (a grown-up sets it up) is the only key.
+   Needs signal (cloud) — at a no-signal campsite it shows a friendly offline note. */
+let boardPoll=null, boardCache=[];
+function stopBoardPoll(){ if(boardPoll){clearInterval(boardPoll);boardPoll=null;} }
+async function boardFetch(){
+  const c=state.familyCode; if(!c)return null;
+  try{ const r=await fetch(`${SYNC_URL}/board/${c}`); if(!r.ok)return null; const d=await r.json(); if(d&&d.ok){boardCache=d.messages||[];return boardCache;} }catch(e){}
+  return null;
+}
+function boardTime(ts){ try{const d=new Date(ts),s=(Date.now()-d.getTime())/1000; if(s<60)return"now"; if(s<3600)return Math.floor(s/60)+"m"; if(s<86400)return Math.floor(s/3600)+"h"; return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(e){return"";} }
+function boardBubble(m){
+  const mine=(m.fromName||"")===(state.name||"");
+  let card="";
+  if(m.card){ const o=cardFromCode(m.card); if(o){ ensureMirrorCSS(); card=`<div class="cardstage" style="width:118px;height:150px;margin:6px 0 4px;border-radius:12px;position:relative;overflow:hidden;border:1px solid var(--line)">${cardInnerHTML(o,false)}</div><button class="btn alt" data-remix="${esc(m.card)}" style="width:auto;padding:6px 12px;font-size:12px">🎴 Open &amp; remix</button>`; } }
+  return `<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'};margin-bottom:10px">
+    <div style="font-size:11px;color:var(--ink-dim);margin:0 5px 3px">${m.grown?"🧑":"🛹"} ${esc(m.fromName||'Someone')} · ${boardTime(m.ts)}</div>
+    ${m.text?`<div style="max-width:82%;padding:9px 13px;border-radius:15px;font-size:14px;line-height:1.4;background:${mine?'var(--grad-cool)':'var(--panel-2)'};color:${mine?'#0a0a0a':'var(--ink)'};${mine?'border-bottom-right-radius:5px':'border-bottom-left-radius:5px'};word-break:break-word">${esc(m.text)}</div>`:""}
+    ${card}
+  </div>`;
+}
+function boardRemix(code){
+  const o=cardFromCode(code); if(!o){toast("Couldn't open that card 🙂");return;}
+  stopBoardPoll(); ensureMirrorCSS();
+  cardCur={id:"c"+Date.now(),bg:o.bg||{type:"skin",v:state.skin},els:o.els||[],frame:!!o.frame};
+  cardSel=-1;cardTab="stamps";cardDrag=null;
+  drawCardMaker(); toast("Remix it & save 🎴");
+}
+async function shareCardToBoard(card){
+  if(!state.familyCode){ toast("Set up your Family Board first 💬"); closeSheet(); openFamilyBoard(); return; }
+  const code=cardToCode(card); if(!code){toast("Couldn't share that one 🙂");return;}
+  toast("Sharing to the family…");
+  try{
+    const r=await fetch(`${SYNC_URL}/board/${state.familyCode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fromName:state.name||"Someone",grown:!!state.isGrownUp,text:"made a Fit Card ✨",card:code})});
+    if(!r.ok)throw 0;
+    toast("Shared to the family board 🎴💛"); closeSheet(); boardCache=[]; openFamilyBoard();
+  }catch(e){ toast("Couldn't share — check your signal 📡"); }
+}
+
+/* ---------- invite the family: a scan-to-join screen for a big family day ----------
+   Pre-baked QR opens the app (works offline). If a Family Board exists, the shared
+   link carries a one-tap join code (#join=<code>) so scanning/tapping auto-joins. */
+let pendingJoin=null;
+function openInvite(){
+  const has=state.familyCode;
+  const link=location.origin+location.pathname+(has?("#join="+has):"");
+  const shareTxt=`Join ${state.familyName||"our family"} on FUTURE OUTFIT!${has?` Family code: ${has}`:""}`;
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:23px;font-weight:900;text-align:center">Join ${esc(state.familyName||"the family")} 👋</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 14px;text-align:center">Point a phone camera at this — it opens the app. Then add yourself, 20 secs.</p>
+    <div style="background:#fff;border-radius:18px;padding:16px;width:240px;margin:0 auto;box-shadow:0 8px 28px rgba(0,0,0,.45)"><img src="${FO_QR}" alt="Scan to open Future Outfit" style="width:100%;display:block"></div>
+    <p style="text-align:center;margin:14px 0 2px;font-size:13px;color:var(--ink-soft)">or open</p>
+    <p style="text-align:center;margin:0 0 14px;font-weight:800;color:var(--accent);font-size:15px">rrraaddeerr.github.io/futureoutfit</p>
+    ${has?`<div class="safe-note">💬 <div>Family Board code: <b style="color:var(--ink)">${esc(has)}</b> — share the invite below and it joins them in one tap, or they type it in.</div></div>`:`<div class="know" style="margin-bottom:6px">💡 Set up your Family Board (💬) first — then this invite carries a one-tap join code.</div>`}
+    <button class="btn" id="invShare" style="margin-top:14px">📤 Share the invite${has?" (auto-joins)":""}</button>`;
+  $("#invShare").onclick=()=>{ const data={title:"FUTURE OUTFIT",text:shareTxt,url:link}; if(navigator.share)navigator.share(data).catch(()=>{}); else {navigator.clipboard&&navigator.clipboard.writeText(shareTxt+" "+link);toast("Invite copied — paste it anywhere 📋");} };
+  openSheet();
+}
+/* deep link: opening the app with #join=<family-code> auto-joins that board */
+function handleJoinHash(){
+  const m=(location.hash||"").match(/^#\/?join=([a-z]+-[a-z]+-\d{2})$/i);
+  if(!m)return false;
+  const code=m[1].toLowerCase();
+  try{history.replaceState(null,"","#you");}catch(e){}
+  if(!localStorage.getItem("fo_welcomed")){ pendingJoin=code; }
+  else { state.familyCode=code; save(); setTimeout(()=>toast("Joined the family board 💬"),400); }
+  return true;
+}
+function boardRenderThread(msgs,forceBottom){
+  const th=$("#fbThread"); if(!th)return;
+  const atBottom=forceBottom||(th.scrollTop+th.clientHeight>=th.scrollHeight-40);
+  th.innerHTML=(msgs&&msgs.length)?msgs.map(boardBubble).join(""):`<div class="empty" style="padding:26px"><div class="big">💬</div>No messages yet.<br>Say hi to the family 👋</div>`;
+  if(atBottom)th.scrollTop=th.scrollHeight;
+}
+function openFamilyBoard(){
+  stopBoardPoll();
+  if(!state.familyCode){ boardSetup(); return; }
+  $("#sheetPad").innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <h2 style="margin:0;font-size:22px;font-weight:900">${esc(state.familyName||"Family")} Board 💬</h2>
+      <button class="btn alt" id="fbInfo" style="width:auto;padding:6px 12px;font-size:15px" title="Code &amp; info">ⓘ</button>
+    </div>
+    <div class="safe-note" style="margin-top:8px">🛡️ <div>One group chat for the whole family — <b>everyone sees every message</b>. No private messages, so nobody can DM you or your kids.</div></div>
+    <div id="fbThread" style="margin:14px 0;height:46vh;overflow-y:auto;padding:2px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="fbText" maxlength="500" placeholder="Message ${esc(state.familyName||'the family')}…" style="flex:1;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font:inherit;color:var(--ink)">
+      <button class="btn" id="fbSend" style="width:auto;padding:12px 17px">Send</button>
+    </div>`;
+  $("#fbInfo").onclick=boardInfo;
+  $("#fbSend").onclick=boardSend;
+  $("#fbText").onkeydown=e=>{ if(e.key==="Enter"){e.preventDefault();boardSend();} };
+  $("#fbThread").onclick=e=>{ const b=e.target.closest("[data-remix]"); if(b)boardRemix(b.dataset.remix); };
+  boardRenderThread(boardCache,true);
+  boardFetch().then(m=>{ if(m)boardRenderThread(m,true); else if(!boardCache.length){const th=$("#fbThread");if(th)th.innerHTML=`<div class="empty" style="padding:26px"><div class="big">📡</div>Can't reach the board — you're offline.<br>It'll be here when you're back on signal.</div>`;} });
+  boardPoll=setInterval(()=>{ if(!$("#fbThread")){stopBoardPoll();return;} boardFetch().then(m=>{ if(m)boardRenderThread(m,false); }); },6000);
+  openSheet();
+}
+async function boardSend(){
+  const inp=$("#fbText"); if(!inp)return;
+  const text=(inp.value||"").trim(); if(!text)return;
+  if(!state.familyCode){toast("No family board yet");return;}
+  inp.value="";
+  const optimistic={id:"tmp"+Date.now(),fromName:state.name||"Me",grown:!!state.isGrownUp,text,ts:new Date().toISOString()};
+  boardCache=boardCache.concat(optimistic);
+  boardRenderThread(boardCache,true);
+  try{
+    const r=await fetch(`${SYNC_URL}/board/${state.familyCode}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fromName:state.name||"Someone",grown:!!state.isGrownUp,text})});
+    if(!r.ok)throw 0;
+    await boardFetch(); boardRenderThread(boardCache,true);
+  }catch(e){ toast("Couldn't send — check your signal 📡"); }
+}
+function boardSetup(){
+  const grown=state.isGrownUp;
+  const ist='width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:13px;font:inherit;color:var(--ink)';
+  const labst='font-size:12px;text-transform:uppercase;letter-spacing:.13em;color:var(--ink-dim);font-weight:900';
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:22px;font-weight:900">Family Board 💬</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 4px">One safe group chat for <b>${esc(state.familyName||"your family")}</b> — instead of WhatsApp. Everyone sees every message; <b>no private DMs, ever</b>.</p>
+    <div class="safe-note">🛡️ <div>Only people with your <b>family code</b> can see it — share it with real family only. A grown-up sets it up.</div></div>
+    ${grown?`<button class="btn" id="fbStart" style="margin-top:14px">✨ Start our family board</button>
+    <div class="lab" style="${labst};margin:18px 0 6px">Already have a family code?</div>`:`<div class="lab" style="${labst};margin:18px 0 6px">Enter your family code <span style="text-transform:none;letter-spacing:0;font-weight:600">— ask a grown-up</span></div>`}
+    <div style="display:flex;gap:8px"><input id="fbCode" placeholder="mellow-otter-42" style="${ist};flex:1"><button class="btn alt" id="fbJoin" style="width:auto;padding:12px 16px">Join</button></div>`;
+  if(grown){ const s=$("#fbStart"); if(s)s.onclick=async()=>{
+    toast("Making your board…");
+    try{ const r=await fetch(`${SYNC_URL}/profile`,{method:"POST"}); const d=await r.json(); if(!r.ok||!d.code)throw 0;
+      state.familyCode=d.code; save(); toast("Board ready 💬"); openFamilyBoard();
+    }catch(e){ toast("Couldn't reach the cloud — try when you have signal 📡"); }
+  }; }
+  $("#fbJoin").onclick=()=>{
+    const c=($("#fbCode").value||"").trim().toLowerCase();
+    if(!/^[a-z]+-[a-z]+-\d{2}$/.test(c)){toast("That code looks off 🙂");return;}
+    state.familyCode=c; save(); boardCache=[]; openFamilyBoard();
+  };
+  openSheet();
+}
+function boardInfo(){
+  stopBoardPoll();
+  const c=state.familyCode||"";
+  $("#sheetPad").innerHTML=`
+    <h2 style="margin:0;font-size:22px;font-weight:900">Your family code 💬</h2>
+    <p style="color:var(--ink-soft);margin:6px 0 10px">Share this with <b>real family only</b> so they can join the board. It's the only key — and there are no private messages, by design.</p>
+    <div style="display:flex;gap:8px;align-items:center"><code style="flex:1;background:#0e0a08;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:16px;letter-spacing:.04em">${esc(c)}</code><button class="btn alt" id="fbCopy" style="width:auto;padding:11px 14px">Copy</button></div>
+    <button class="btn cool" id="fbInvite" style="margin-top:10px">📷 Show invite QR — scan to join</button>
+    <button class="btn" id="fbShare" style="margin-top:10px">📤 Share the join link</button>
+    <div class="safe-note" style="margin-top:12px">🛡️ <div>Everyone with this code sees the group thread. Nobody can message a person privately — the app has no DMs at all.</div></div>
+    <div class="btnrow" style="margin-top:14px"><button class="btn alt" id="fbLeave">Leave board</button><button class="btn" id="fbBack">← Messages</button></div>`;
+  $("#fbCopy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(c);toast("Code copied 📋");};
+  $("#fbInvite").onclick=openInvite;
+  $("#fbShare").onclick=()=>{ const link=location.origin+location.pathname+"#join="+c; const data={title:"FUTURE OUTFIT",text:`Join ${state.familyName||"our family"} on FUTURE OUTFIT — one tap to join our board`,url:link}; if(navigator.share)navigator.share(data).catch(()=>{}); else {navigator.clipboard&&navigator.clipboard.writeText(`${data.text} — ${link}`);toast("Join link copied 📋");} };
+  $("#fbBack").onclick=openFamilyBoard;
+  $("#fbLeave").onclick=()=>{ state.familyCode=""; save(); boardCache=[]; stopBoardPoll(); toast("Left the board"); closeSheet(); if($("#view-you").classList.contains("active"))renderYou(); };
+  openSheet();
 }
 function famRow(p,kind){
   const ic=kind==="adult"?esc((p.name||"?")[0]):(p.emoji||"🙂");
@@ -2273,7 +2522,8 @@ function myItemMP(it,key){
 
 function renderCloset(){
   const mine=state.myCloset||[], active=mine.filter(i=>!i.passedTo), outfits=state.myOutfits||[], passed=mine.filter(i=>i.passedTo);
-  let h=`<div class="lab" style="margin:2px 0 8px">👚 My closet — pieces you own</div>
+  let h=`<button class="btn cool" id="futureMirror" style="margin-bottom:12px">🪞 Future Mirror — try your clothes on</button>
+    <div class="lab" style="margin:2px 0 8px">👚 My closet — pieces you own</div>
     <button class="btn" id="addItem" style="margin-bottom:12px">📸 Add my clothes</button>`;
   h+= active.length
     ? `<div class="grid">${active.map(it=>`<div class="mini" data-it="${it.id}">${myItemMP(it,"my")}<div class="mn">${esc(it.name)}</div></div>`).join("")}</div>
@@ -2308,6 +2558,7 @@ function renderCloset(){
   }).join("");
   $("#closetBox").innerHTML=h;
   $("#addItem").onclick=openAddItem;
+  {const fm=$("#futureMirror");if(fm)fm.onclick=openFutureMirror;}
   const ae=$("#addItemEmpty");if(ae)ae.onclick=openAddItem;
   const bf=$("#buildFit");if(bf)bf.onclick=openBuildOutfit;
   $$("#closetBox .mini[data-it]").forEach(m=>m.onclick=()=>openItemActions((state.myCloset||[]).find(i=>i.id===m.dataset.it)));
@@ -2640,7 +2891,7 @@ function openTryOn(fit){
 
 /* ---------- sheet & nav ---------- */
 function openSheet(){$("#sheetBg").classList.add("open");requestAnimationFrame(()=>$("#sheet").classList.add("open"));}
-function closeSheet(){$("#sheet").classList.remove("open");$("#sheetBg").classList.remove("open");}
+function closeSheet(){$("#sheet").classList.remove("open");$("#sheetBg").classList.remove("open");if(typeof stopBoardPoll==="function")stopBoardPoll();}
 $("#sheetBg").onclick=closeSheet;
 $("#meChip").onclick=()=>openProfile();
 
@@ -2660,6 +2911,7 @@ function showTab(v){
 const TABS=["discover","board","closet","fits","quests","you","learn"];
 // Hash router: #<tab> for tabs, #look/<id> for a look's own page.
 function route(){
+  if(handleJoinHash()){ /* #join=<code> handled; hash now points at #you */ }
   const h=(location.hash||"").replace(/^#\/?/,"");
   if(h.indexOf("look/")===0){ renderLookPage(decodeURIComponent(h.slice(5))); return; }
   showTab(TABS.includes(h)?h:"discover");
@@ -2672,6 +2924,8 @@ $("#goCloset").onclick=()=>go("closet");
 
 /* ---------- cloud save (accounts via a friendly code) ---------- */
 const SYNC_URL="https://fo-sync.raderturner.workers.dev";
+/* pre-baked QR of the app URL (works offline) — for the "invite the family" screen */
+const FO_QR="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAXIAAAFyCAIAAABnRsZeAAAHp0lEQVR4nO3cMW7zuAJG0WTwlyre/lc5hXvNDoTB4+WQlM/p4yi2c8HiA3/v+/4B6PwVvhaArAA9WQFisgLEZAWIyQoQkxUgJitATFaAmKwAMVkBYrICxGQFiMkKEJMVICYrQExWgJisADFZAWJ/Rn74uv738y6fz98bvhsjT7XKqu/G83v1/FR7fvqrjLwbTitATFaAmKwAMVkBYrICxGQFiMkKEJMVICYrwE4r2xO3oXuuP5/tuQ0d+b0jW9gTv5OfL/tfcFoBYrICxGQFiMkKEJMVICYrQExWgJisADFZAc5Z2T47cUk575lX7WjnrV1X7Wjn/b0nfq8+i9a9TitATFaAmKwAMVkBYrICxGQFiMkKEJMVICYrwFtWtu8z727XE59qz90w/w2nFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUgZmWbOfHm13nm7WhHfvb5qSx0K04rQExWgJisADFZAWKyAsRkBYjJChCTFSAmK8BbVrbftmgc2dHO2+DO+xT23Bzv+V59Xve/4LQCxGQFiMkKEJMVICYrQExWgJisADFZAWKyApyzsj3xBtYTd7SrNqkj29D3vVfPri/7X3BaAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQF2Wtm+7w7OVd63wtxz+7tqN/xtnFaAmKwAMVkBYrICxGQFiMkKEJMVICYrQExWgNjvfd//9w/veW/oiFVbyVXv5Mjfu+fadd73yvf533NaAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQF2usv22aol5ftuFd1zRzvPyOe7at174r2/z0beDacVICYrQExWgJisADFZAWKyAsRkBYjJChCTFWCnle2qdeCqu11XbTRHnurb7lg9cdt9bfltH+G0AsRkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLstLKdt+B839r1xHtS91z3jtxl+2zPT/Dackf7zGkFiMkKEJMVICYrQExWgJisADFZAWKyAsRkBdhpZftszxtnR5y43131s8/m3XP87H0b3M+Wy2+nFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUg9nvf989p9lx/nriGXPVOvu+VT/xOPht5ZqcVICYrQExWgJisADFZAWKyAsRkBYjJChCTFWCnle2Jt8bu+cx7rntHXnnE+z6jz4HfjRFOK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUgJitA7M/PNCP7znk3g85bnY4887y944hV98LOuzV21Z3Bq6z6i5xWgJisADFZAWKyAsRkBYjJChCTFSAmK0BMVoBzVrZ7LjhPvBn0xBtn5/3eVTvpZyd+665pn6DTChCTFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQ+73v+2eOecvC961d97yfddWaec/3atVS9jrw/8hpBYjJChCTFSAmK0BMVoCYrAAxWQFisgLEZAWIvfAu23n7zj13pe+7j3aePT/Ba8s18winFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxVgp7ts91wH7nm367xX3vOp5r3ynne7rnqqEVa2wDFkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLstLL9tuXoqntD93wnn+35CY688rM9f++16NN3WgFisgLEZAWIyQoQkxUgJitATFaAmKwAMVkBzrnL9tmee9Z5TlxwjjjxmU/cs15bLrCdVoCYrAAxWQFisgLEZAWIyQoQkxUgJitATFaAc1a2J95XuucNuyNWbY5PXGCfuJR95i5b4CVkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLE/vws8r5l4bMTF7p7rk7n2fNbdx34+TqtADFZAWKyAsRkBYjJChCTFSAmK0BMVoCYrABvWdnueV/pvFeet0ld9crzbgWe91R77lmfnbhmdloBYrICxGQFiMkKEJMVICYrQExWgJisADFZAXZa2b5vOfps1a702arbefe0at074tpyGTzCaQWIyQoQkxUgJitATFaAmKwAMVkBYrICxGQF2Gllu+fCb8TzknLPu13n/d49t857fidXvZMj5j2V0woQkxUgJitATFaAmKwAMVkBYrICxGQFiMkKsNPK9tmey8I97w1dtYXdc+067y868Ubha9o7Oe975bQCxGQFiMkKEJMVICYrQExWgJisADFZAWKyApyzsn124t5x5Pfuedfpqi3siWvmPW9u/mz5rXNaAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQHesrJ9nz13w6t2tCP7zj1v9p33e69p9yu7yxZ4CVkBYrICxGQFiMkKEJMVICYrQExWgJisADEr28yed7vOu711ZCl74up05Pc+m/dUI793hNMKEJMVICYrQExWgJisADFZAWKyAsRkBYjJCvCWle28hd88q5ajqzaaqz6jVVvYVXf3XtO+G6s4rQAxWQFisgLEZAWIyQoQkxUgJitATFaAmKwA56xs37cdfN9S1mK1+tmRp/osugXZXbbAMWQFiMkKEJMVICYrQExWgJisADFZAWKyAsR+7/uuXxP4ak4rQExWgJisADFZAWKyAsRkBYjJChCTFSAmK0BMVoCYrAAxWQFisgLEZAWIyQoQkxUgJitATFaAmKwAP61/AD87P5zIFGCXAAAAAElFTkSuQmCC";
 const PKEY="fo_profile";
 const myCode=()=>localStorage.getItem(PKEY)||"";
 let pushT=null, syncing=false;
@@ -2888,16 +3142,37 @@ function cardInnerHTML(card,interactive){
     if(e.k==="emoji")return `<div class="cel emoji${selc}" ${d} style="${pos};font-size:${Math.round(e.s*40)}px">${e.v}</div>`;
     if(e.k==="text")return `<div class="cel text${selc}" ${d} style="${pos};font-size:${Math.round(e.s*22)}px">${esc(e.v)}</div>`;
     if(e.k==="sil"){const w=Math.round(e.s*84);return `<div class="cel sil${selc}" ${d} style="${pos};width:${w}px;height:${w}px"><div class="gx">${garmentRender("ce"+i+(interactive?"i":"v"),e.v,[e.c,shade(e.c,.4)],"chrome",false)}</div></div>`;}
+    if(e.k==="photo"){const w=Math.round(e.s*104);return `<div class="cel photo${selc}" ${d} style="${pos};width:${w}px"><img src="${e.v}" alt="" draggable="false" style="width:100%;display:block;pointer-events:none;border-radius:10px"></div>`;}
     return "";
   }).join("");
-  return bgHTML+els;
+  const frame=card.frame?`<div class="cframe"></div>`:"";
+  return bgHTML+els+frame;
 }
 
 function openCardMaker(existingId){
   const existing=(state.cards||[]).find(c=>c.id===existingId);
   cardCur = existing ? JSON.parse(JSON.stringify(existing)) : {id:"c"+Date.now(),bg:{type:"skin",v:state.skin},els:[]};
   cardSel=-1; cardTab="stamps"; cardDrag=null;
+  ensureMirrorCSS(); drawCardMaker(); openSheet();
+}
+/* ---- Future Mirror: a guided Fit Card — your selfie + your real clothes on top,
+   in a chrome frame. Stylized overlay (no heavy AR); lean into the flat look. ---- */
+function ensureMirrorCSS(){
+  if(document.getElementById("mirrorCSS"))return;
+  const st=document.createElement("style"); st.id="mirrorCSS"; st.textContent=`
+  .cel.photo{filter:drop-shadow(0 3px 7px rgba(0,0,0,.5))}
+  .cel.photo.sel img{outline:2px solid var(--accent);outline-offset:1px}
+  .cframe{position:absolute;inset:0;pointer-events:none;border-radius:inherit;border:7px solid transparent;
+    background:linear-gradient(#0000,#0000) padding-box,linear-gradient(150deg,#f3f7fc,#a3b3c8 22%,#6d7c92 48%,#c8d3e1 70%,#eef3f9) border-box;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.35), inset 0 0 24px rgba(0,0,0,.32)}`;
+  document.head.appendChild(st);
+}
+function openFutureMirror(){
+  ensureMirrorCSS();
+  cardCur={id:"c"+Date.now(),bg:{type:"skin",v:state.skin},els:[],frame:true};
+  cardSel=-1; cardTab="bg"; cardDrag=null;
   drawCardMaker(); openSheet();
+  toast("Add your selfie, then dress it up 🪞");
 }
 
 function drawCardMaker(){
@@ -2950,18 +3225,31 @@ function drawTray(){
     tray.innerHTML=STAMPS.map(s=>`<button class="stamp" data-emoji="${s}">${s}</button>`).join("");
     $$("#cardTray [data-emoji]").forEach(b=>b.onclick=()=>addEl({k:"emoji",v:b.dataset.emoji}));
   } else if(cardTab==="clothes"){
-    tray.innerHTML=`<div style="width:100%;display:flex;gap:8px;flex-wrap:wrap">${CARD_SILS.map(s=>`<button class="stamp sil" data-sil="${s}"><div class="gx">${garmentRender("tray"+s,s,[ITEM_COLORS[0],shade(ITEM_COLORS[0],.4)],"chrome",false)}</div></button>`).join("")}</div>
+    const mine=(state.myCloset||[]).filter(i=>i.photo);
+    const cut='width:56px;height:56px;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel)';
+    const cutImg='width:100%;height:100%;object-fit:cover;display:block';
+    tray.innerHTML=`
+      ${mine.length?`<div style="width:100%;font-size:11px;color:var(--ink-dim);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Your closet — try it on 🪞</div>
+        <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${mine.map(i=>`<button class="stamp" style="${cut}" data-mine="${i.id}"><img src="${i.photo}" style="${cutImg}" alt="${esc(i.name)}"></button>`).join("")}</div>`:""}
+      <div style="width:100%;font-size:11px;color:var(--ink-dim);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Thrift finds</div>
+      <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${THRIFT_FINDS.slice(0,10).map((x,i)=>`<button class="stamp" style="${cut}" data-find="${i}"><img src="looks/finds/${x.f}.jpg" style="${cutImg}" alt="${esc(x.n)}" loading="lazy"></button>`).join("")}</div>
+      <div style="width:100%;font-size:11px;color:var(--ink-dim);font-weight:800;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Drawn pieces</div>
+      <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap">${CARD_SILS.map(s=>`<button class="stamp sil" data-sil="${s}"><div class="gx">${garmentRender("tray"+s,s,[ITEM_COLORS[0],shade(ITEM_COLORS[0],.4)],"chrome",false)}</div></button>`).join("")}</div>
       <div style="width:100%;margin-top:4px" class="swatchrow">${ITEM_COLORS.map((c,i)=>`<button class="swatch" data-cc="${c}" aria-pressed="${i===0}" style="background:${c}"></button>`).join("")}</div>`;
     let pc=ITEM_COLORS[0];
     $$("#cardTray [data-cc]").forEach(b=>b.onclick=()=>{pc=b.dataset.cc;$$("#cardTray [data-cc]").forEach(x=>x.setAttribute("aria-pressed",x===b));});
     $$("#cardTray [data-sil]").forEach(b=>b.onclick=()=>addEl({k:"sil",v:b.dataset.sil,c:pc}));
+    $$("#cardTray [data-mine]").forEach(b=>b.onclick=()=>{const it=(state.myCloset||[]).find(i=>i.id===b.dataset.mine);if(it&&it.photo)addEl({k:"photo",v:it.photo});});
+    $$("#cardTray [data-find]").forEach(b=>b.onclick=()=>addEl({k:"photo",v:"looks/finds/"+THRIFT_FINDS[+b.dataset.find].f+".jpg"}));
   } else if(cardTab==="text"){
     tray.innerHTML=`<input id="cardText" maxlength="22" placeholder="type a word…" style="flex:1;min-width:0;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font:inherit;color:var(--ink)"><button class="btn" id="cardTextAdd" style="width:auto;padding:12px 16px;margin-left:8px">Add</button>`;
     $("#cardTextAdd").onclick=()=>{const v=($("#cardText").value||"").trim();if(v)addEl({k:"text",v:v.slice(0,22)});};
   } else if(cardTab==="bg"){
     const ids=Object.keys(THEMES);
     tray.innerHTML=`<button class="btn cool" id="bgPhoto" style="width:100%;margin-bottom:8px">📸 Use my selfie</button><input type="file" id="bgFile" accept="image/*" style="display:none">
+      <button class="btn alt" id="bgFrame" style="width:100%;margin-bottom:8px">🪟 Chrome frame: ${cardCur.frame?"ON":"OFF"}</button>
       <div style="width:100%;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">${ids.map(id=>{const s=THEMES[id];const on=cardCur.bg&&cardCur.bg.type==="skin"&&cardCur.bg.v===id;return `<button class="stamp" data-bg="${id}" style="width:100%;height:42px;background:linear-gradient(120deg,${s.c1},${s.c2},${s.c3});${on?'outline:2px solid var(--accent);outline-offset:2px':''}"></button>`;}).join("")}</div>`;
+    $("#bgFrame").onclick=()=>{cardCur.frame=!cardCur.frame;drawCardMaker();};
     $$("#cardTray [data-bg]").forEach(b=>b.onclick=()=>{cardCur.bg={type:"skin",v:b.dataset.bg};drawCardMaker();});
     $("#bgPhoto").onclick=()=>$("#bgFile").click();
     $("#bgFile").onchange=e=>{const f=e.target.files&&e.target.files[0];if(!f)return;toast("Adding photo…");shrinkImage(f,520,d=>{if(d){cardCur.bg={type:"photo",v:d};drawCardMaker();}else toast("Couldn't read that 🙂");});};
@@ -2977,7 +3265,10 @@ function saveCard(){
 }
 
 /* share & remix by code (photos stripped to keep codes small) */
-function cardToCode(card){const c={bg:(card.bg&&card.bg.type==="photo")?{type:"skin",v:state.skin}:(card.bg||{type:"skin",v:state.skin}),els:card.els||[]};try{return btoa(unescape(encodeURIComponent(JSON.stringify(c))));}catch(e){return"";}}
+/* Shareable code drops the selfie background AND any personal photo cut-outs
+   (data: URLs) — so a kid never broadcasts their face/closet photos, and the code
+   stays small. Keeps the design: vector pieces, thrift-find cut-outs, text, frame. */
+function cardToCode(card){const els=(card.els||[]).filter(e=>!(e.k==="photo"&&/^data:/.test(e.v||"")));const c={bg:(card.bg&&card.bg.type==="photo")?{type:"skin",v:state.skin}:(card.bg||{type:"skin",v:state.skin}),els,frame:!!card.frame};try{return btoa(unescape(encodeURIComponent(JSON.stringify(c))));}catch(e){return"";}}
 function cardFromCode(code){try{const o=JSON.parse(decodeURIComponent(escape(atob((code||"").trim()))));if(!o||!Array.isArray(o.els))return null;return o;}catch(e){return null;}}
 
 function cardsSectionHTML(){
@@ -3001,10 +3292,12 @@ function openCardActions(id){
   const card=(state.cards||[]).find(c=>c.id===id); if(!card)return;
   $("#sheetPad").innerHTML=`<div class="cardstage" style="max-width:220px;margin:0 auto 12px">${cardInnerHTML(card,false)}</div>
     <button class="btn" id="caEdit">✏️ Edit</button>
-    <button class="btn cool" id="caShare" style="margin-top:10px">📤 Share code (to remix)</button>
+    <button class="btn cool" id="caBoard" style="margin-top:10px">📣 Show the family 🎴</button>
+    <button class="btn alt" id="caShare" style="margin-top:10px">📤 Share code (to remix)</button>
     <button class="btn alt" id="caDel" style="margin-top:10px">🗑️ Delete</button>`;
   openSheet();
   $("#caEdit").onclick=()=>openCardMaker(id);
+  $("#caBoard").onclick=()=>shareCardToBoard(card);
   $("#caShare").onclick=()=>{const code=cardToCode(card);if(code&&navigator.clipboard)navigator.clipboard.writeText(code);toast("Card code copied 📤 — send it to a pal");};
   $("#caDel").onclick=()=>{state.cards=(state.cards||[]).filter(c=>c.id!==id);save();closeSheet();go("board");toast("Deleted");};
 }
@@ -3121,6 +3414,7 @@ function commitSetup(){ // persist identity as soon as it's known
 function finishSetup(){
   commitSetup();
   localStorage.setItem("fo_welcomed","1");
+  if(pendingJoin){ state.familyCode=pendingJoin; pendingJoin=null; save(); }  // auto-join from an invite link
   closeSheet(); updateMe();
   if($("#view-you").classList.contains("active"))renderYou();
   toast(`Welcome, ${state.name}! 💛`);

@@ -90,6 +90,42 @@ const run = async () => {
   r = await call("/msg/" + b, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: "nope", text: "hi" }) });
   eq("msg bad sender 400", r.status, 400);
 
+  // ---- family group board (group-only) ----
+  const fam = "mellow-otter-42";
+  // empty to start
+  r = await call("/board/" + fam); d = await r.json();
+  eq("board empty ok", r.status, 200); eq("board empty len", d.messages.length, 0);
+  // grown-up posts to the group
+  r = await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromName: "Rader", grown: true, text: "Who's bringing the marshmallows?" }) });
+  d = await r.json(); eq("board post ok", r.status, 200); ok("board post id", !!d.id);
+  // kid posts to the group
+  await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromName: "Andre", grown: false, text: "meee 🔥" }) });
+  // everyone reads the same thread, oldest->newest
+  r = await call("/board/" + fam); d = await r.json();
+  eq("board has 2", d.messages.length, 2);
+  eq("board order 1", d.messages[0].fromName, "Rader");
+  eq("board order 2", d.messages[1].fromName, "Andre");
+  eq("board flags grown", d.messages[0].grown, true);
+  // empty text rejected
+  r = await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fromName: "x", text: "  " }) });
+  eq("board empty text 400", r.status, 400);
+  // bad group code -> 400
+  r = await call("/board/not!valid"); eq("board bad code 400", r.status, 400);
+
+  // sharing a Fit Card (base64 remix code) to the group
+  r = await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromName: "Andre", grown: false, text: "made a fit ✨", card: "eyJlbHMiOltdfQ==" }) });
+  eq("board card post ok", r.status, 200);
+  r = await call("/board/" + fam); d = await r.json();
+  const shared = d.messages.find(m => m.card);
+  ok("board carries shared card", !!shared && shared.card === "eyJlbHMiOltdfQ==");
+  // card-only (no text) still allowed
+  r = await call("/board/" + fam, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromName: "X", card: "eyJlbHMiOltdfQ==" }) });
+  eq("board card-only ok", r.status, 200);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 };
