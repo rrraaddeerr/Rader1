@@ -8,7 +8,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node test/categorize.test.mjs && node test/worker.test.mjs && node test/brain.test.mjs && node test/brain-routes.test.mjs && node test/archivist.test.mjs",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "setup-kv": "node scripts/setup-kv.mjs"
   },
   "devDependencies": {
     "wrangler": "^3.114.17"

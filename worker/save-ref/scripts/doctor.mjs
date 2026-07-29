@@ -162,6 +162,17 @@ try {
   } else if (configured) {
     console.log(ok(`wrangler.toml pins the right account (${configured})`));
   }
+
+  // The placeholder KV id fails the deploy late, at the Cloudflare API, with
+  // an error that doesn't mention wrangler.toml. Catch it here instead.
+  if (toml.includes("REPLACE_WITH_KV_ID")) {
+    console.log(bad("KV namespace id is still the placeholder"));
+    console.log(dim("   Deploy will fail: \"KV namespace 'REPLACE_WITH_KV_ID' is not valid\"."));
+    problems.push("KV namespace not set up");
+    fixes.push("npm run setup-kv");
+  } else if (/binding\s*=\s*"REFS_KV"/.test(toml)) {
+    console.log(ok("KV namespace id is set"));
+  }
 } catch {}
 
 // ------------------------------------------------------------------ verdict
