@@ -22,6 +22,9 @@ export const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
 /** Vectorize caps metadata; keep it to what the UI needs before hydrating KV. */
 const META_TITLE_MAX = 180;
 
+/** Vectorize rejects topK above this when returnMetadata is "all". */
+const METADATA_TOPK_MAX = 20;
+
 /**
  * Compose the text that represents a ref in the index.
  *
@@ -158,9 +161,15 @@ export async function searchRefsByVector(
   try {
     // Over-fetch so post-filtering still returns a full page. Filtering in JS
     // rather than via Vectorize metadata indexes keeps setup to one command.
+    //
+    // The ceiling is not negotiable: Vectorize REJECTS topK above 20 when full
+    // metadata is requested, so over-fetching past it returns nothing at all
+    // rather than more rows — which reads as "no results" for every filtered
+    // search.
     const narrowing = category || realm;
+    const want = narrowing ? topK * 4 : topK + (exclude ? 1 : 0);
     const res = await env.VECTORS.query(vector, {
-      topK: Math.min(narrowing ? topK * 4 : topK + (exclude ? 1 : 0), 100),
+      topK: Math.min(want, METADATA_TOPK_MAX),
       returnMetadata: "all",
     });
     let matches = res?.matches || [];
@@ -227,19 +236,35 @@ export async function indexInventory(env, items) {
   }
 }
 
-/** Nearest inventory items to a query string — "do I have anything like this?" */
+/**
+ * Nearest inventory items to a query string — "do I have anything like this?"
+ *
+ * Returns `{items, error}` rather than a bare array: an empty result and a
+ * rejected query look identical otherwise, which makes a real failure
+ * impossible to tell from "nothing matched".
+ *
+ * @returns {Promise<{items:Array, error:string|null}>}
+ */
 export async function matchInventory(env, query, { topK = 12 } = {}) {
-  if (!inventoryReady(env)) return [];
+  if (!inventoryReady(env)) return { items: [], error: "INV_VECTORS binding missing" };
   const vector = await embedOne(env, query);
-  if (!vector) return [];
+  if (!vector) return { items: [], error: "embedding failed — no vector for the query" };
+
+  // Vectorize caps topK at 20 when full metadata is requested; asking for more
+  // is rejected outright rather than truncated.
+  const capped = Math.min(topK, METADATA_TOPK_MAX);
   try {
-    const res = await env.INV_VECTORS.query(vector, { topK: Math.min(topK, 100), returnMetadata: "all" });
-    return (res?.matches || []).map((m) => ({
-      id: m.id,
-      score: typeof m.score === "number" ? m.score : 0,
-      ...(m.metadata || {}),
-    }));
-  } catch {
-    return [];
+    const res = await env.INV_VECTORS.query(vector, { topK: capped, returnMetadata: "all" });
+    const matches = res?.matches || [];
+    return {
+      items: matches.map((m) => ({
+        id: m.id,
+        score: typeof m.score === "number" ? m.score : 0,
+        ...(m.metadata || {}),
+      })),
+      error: null,
+    };
+  } catch (err) {
+    return { items: [], error: `query rejected: ${String(err?.message ?? err).slice(0, 240)}` };
   }
 }

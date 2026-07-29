@@ -60,8 +60,15 @@ export async function matchArchive(env, input, { topK = 12 } = {}) {
   const { query, via } = await resolveQuery(env, input);
   if (!query) return { ok: false, error: "Give me an image, a ref id, or a description." };
 
-  const items = await matchInventory(env, query, { topK });
-  return { ok: true, via, query: query.slice(0, 400), items };
+  const { items, error } = await matchInventory(env, query, { topK });
+  return {
+    ok: true,
+    via,
+    query: query.slice(0, 400),
+    items,
+    // Only when something went wrong; an honest empty result stays silent.
+    ...(error && !items.length ? { debug: error } : {}),
+  };
 }
 
 const SET_INSTRUCTION = [
@@ -94,7 +101,7 @@ export async function draftSet(env, brief, { deep = true, candidates = 40, refTo
     return { ok: false, error: "Inventory isn't indexed yet — run scripts/index-inventory.mjs first." };
   }
 
-  const items = await matchInventory(env, text, { topK: candidates });
+  const { items } = await matchInventory(env, text, { topK: candidates });
   if (!items.length) return { ok: false, error: "No inventory matched that brief." };
 
   // Refs give the model your taste on top of the raw catalogue match.
