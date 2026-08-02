@@ -843,7 +843,7 @@ export default {
         return json({ ok: true, refs, count: refs.length });
       }
 
-      // GET /api/profile — the taste fingerprint future-outfit consumes
+      // GET /api/profile — the archive's taste fingerprint, distilled
       if (path === "/api/profile" && request.method === "GET") {
         const fail = requireToken(request, env);
         if (fail) return fail;

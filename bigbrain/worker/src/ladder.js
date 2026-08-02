@@ -630,6 +630,10 @@ export function nextStep(ref, { now = new Date(), retry = false, maxTier = Infin
       tier: rung.tier,
       vision: Boolean(rung.vision),
       from,
+      // What this step would ASK him, if anything. On the step rather than
+      // looked up from RUNGS by every caller, because "does tonight's work put
+      // cards in his queue" is a question the run record has to answer.
+      proposes: rung.proposes || "",
       redo: forced,
       attempts: st?.attempts || 0,
       why: forced
