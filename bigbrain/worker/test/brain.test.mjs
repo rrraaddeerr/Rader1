@@ -8,8 +8,8 @@ import {
   captionTrackUrl,
   parseTranscriptXml,
 } from "../src/enrich.js";
-import { embedTextFor, brainReady } from "../src/embed.js";
-import { buildContext, sourceOf, parseJsonish, callCheap, CHEAP_MODELS } from "../src/ask.js";
+import { embedTextFor, brainReady, searchRefs } from "../src/embed.js";
+import { buildContext, sourceOf, parseJsonish, callCheap, askBrain, CHEAP_MODELS } from "../src/ask.js";
 
 let pass = 0, fail = 0;
 function ok(label, cond) { cond ? pass++ : (fail++, console.error("✗ " + label)); }
@@ -158,6 +158,47 @@ const allDead = await callCheap(
 );
 eq("all models dead -> null", allDead.text, null);
 eq("one error per candidate", allDead.errors.length, CHEAP_MODELS.length);
+
+// ---- retrieval: a rejected query is not an empty archive ----
+// The one conflation this codebase has paid for three times. Vectorize refuses
+// a topK over its metadata ceiling rather than truncating, and the refusal used
+// to come back as [] — indistinguishable from "you haven't saved that yet".
+const vectorEnv = (query) => ({
+  AI: { async run() { return { data: [[0.1, 0.2, 0.3]] }; } },
+  VECTORS: { query },
+});
+
+const rejected = await searchRefs(
+  vectorEnv(async () => { throw new Error("VECTOR_QUERY_ERROR (code = 40006)"); }),
+  "what is my through-line?"
+);
+eq("a rejected query still returns no rows", rejected.length, 0);
+ok("but it says the query failed", typeof rejected.error === "string" && rejected.error.includes("40006"));
+
+const nothing = await searchRefs(vectorEnv(async () => ({ matches: [] })), "unsaved topic");
+eq("an honest no-match returns no rows too", nothing.length, 0);
+eq("and carries no error", nothing.error, null);
+ok("so the two are distinguishable", Boolean(rejected.error) !== Boolean(nothing.error));
+
+ok("the error never leaks into the wire shape", JSON.stringify(rejected) === "[]");
+
+const unbound = await searchRefs({}, "anything");
+ok("an unbound brain says so rather than looking empty", String(unbound.error).includes("not bound"));
+
+const noEmbed = await searchRefs(
+  { AI: { async run() { throw new Error("model gone"); } }, VECTORS: { async query() { return { matches: [] }; } } },
+  "anything"
+);
+ok("an embedding that failed is not a miss", String(noEmbed.error).includes("embed"));
+
+// ---- askBrain refuses to blame the archive for a broken index ----
+const asked = await askBrain(
+  vectorEnv(async () => { throw new Error("VECTOR_QUERY_ERROR (code = 40006)"); }),
+  "what is my through-line?"
+);
+eq("a failed retrieval is not ok", asked.ok, false);
+ok("and it does not tell him to save more refs", !String(asked.error).includes("Drop a few refs"));
+ok("it names the real failure", String(asked.error).includes("40006"));
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

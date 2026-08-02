@@ -24,6 +24,7 @@
  */
 
 import { fetchMeta } from "./og.js";
+import { charge } from "./budget.js";
 
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_HTML_BYTES = 1_500_000;
@@ -425,23 +426,60 @@ export async function backfillImages(env, { cursor, batch = 25, retry = false } 
 /**
  * Deepen one ref. Returns a patch to merge into it — never mutates.
  *
+ * ONE PAID CALL LIVES IN HERE and it is the expensive one. The vision branch
+ * below is a Workers AI call, and this function is reached from four places —
+ * the nightly's vision job, the nightly's enrich job, `/save`'s background
+ * deepen, and `/api/reindex?deep=1`. Only the first of those books anything, so
+ * for as long as the caption was unmetered the 20/night ration was not in the
+ * path at all: one `POST /api/reindex?deep=1&batch=100` was a hundred vision
+ * calls the governor never saw, and sixteen of those requests would have
+ * captioned the whole archive. That is the shape of the bill he got once.
+ *
+ * So the charge is made HERE, next to the call, where every caller inherits it
+ * whether or not it remembered to ask. `billed` is the opt-out for a caller
+ * that has already booked its own unit — cron.js's vision job charges with
+ * `vision:true` before it gets here, and a second charge would silently halve
+ * the ration to ten. Opt-OUT rather than opt-in on purpose: a caller added
+ * later is metered by default, and forgetting costs an argument rather than a
+ * night's ration.
+ *
+ * A refused caption is reported on the patch (`captionSkipped`) rather than
+ * returned as a bare empty result — a ref with no caption and no reason is
+ * indistinguishable from a ref the model had nothing to say about.
+ *
  * @param {object} env    worker env (needs AI for image captions)
  * @param {object} ref    the stored ref
  * @param {ArrayBuffer} [bytes]  image bytes, when we still have them in memory
+ * @param {object} [opts]
+ * @param {boolean} [opts.billed] the caller already charged for the vision call
  * @returns {Promise<{body?:string, caption?:string, image?:string,
- *   imageTried?:boolean, imageWhy?:string, enrichedAt?:string, enrichKind?:string}>}
+ *   imageTried?:boolean, imageWhy?:string, captionSkipped?:string,
+ *   enrichedAt?:string, enrichKind?:string}>}
  */
-export async function enrichRef(env, ref, bytes) {
+export async function enrichRef(env, ref, bytes, { billed = false } = {}) {
   if (!ref) return {};
   const patch = {};
 
   try {
     if (ref.category === "image" && (bytes || ref.blobKey || ref.image)) {
       const data = bytes || (await fetchImageBytes(env, ref));
-      const caption = await captionImage(env, data);
-      if (caption) {
-        patch.caption = caption;
-        patch.enrichKind = "vision";
+      // Book it only once we know a model call would actually happen. No AI and
+      // no bytes both mean captionImage returns "" without reaching the model,
+      // and a governor that records a spend that never occurred is as wrong as
+      // one that misses a spend that did.
+      const wouldCall = Boolean(data && env?.AI);
+      const booked = wouldCall && !billed
+        ? await charge(env, { tier: 2, units: 1, vision: true, label: "enrich-vision" })
+        : { ok: true };
+
+      if (!booked.ok) {
+        patch.captionSkipped = booked.reason || "the governor refused the vision call";
+      } else {
+        const caption = await captionImage(env, data);
+        if (caption) {
+          patch.caption = caption;
+          patch.enrichKind = "vision";
+        }
       }
     } else if (ref.category === "video" && ref.url) {
       const transcript = await fetchTranscript(ref.url);

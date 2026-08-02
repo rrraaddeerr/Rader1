@@ -13,6 +13,7 @@
  */
 
 import { searchRefs } from "./embed.js";
+import { charge } from "./budget.js";
 
 /**
  * Workers AI model ids move around — a model that existed when this was
@@ -106,9 +107,39 @@ export async function hydrate(env, matches) {
   return refs.filter(Boolean);
 }
 
-/** Call Claude. Returns the text, or null if unset/failed (caller falls back). */
-export async function callClaude(env, { system, user, maxTokens = 1200 }) {
+/**
+ * Call Claude. Returns the text, or null if unset/refused/failed — the caller
+ * falls back to the cheap tier either way.
+ *
+ * THIS IS THE ONLY TIER 3 CALL IN THE WORKER and until now nothing outside the
+ * morning brief booked it. `/api/ask?deep=1` and `/api/profile` both land here,
+ * both are GET-able from a Shortcut, and both cost real money per request — so
+ * a loop, a stuck refresh or a Shortcut that fired more often than he thought
+ * spent without limit while `/api/budget` reported $0.00 all night. The ceiling
+ * cannot govern a tier that never asks it.
+ *
+ * So the charge is made here rather than at each route, for the same reason
+ * enrichRef meters its own vision branch: the call site is the only place every
+ * caller has in common. A refusal is not an error — it returns null and
+ * `generate()` answers from the cheap tier, which is the documented degrade
+ * path and a far better outcome than a surprise bill.
+ *
+ * `billed` is the opt-out for a caller that already booked its unit —
+ * brief.js's synthesise() charges tier 3 itself before it gets here.
+ *
+ * @returns {Promise<string|null>}
+ */
+export async function callClaude(env, { system, user, maxTokens = 1200, billed = false, onRefusal } = {}) {
   if (!env?.ANTHROPIC_API_KEY) return null;
+  if (!billed) {
+    const booked = await charge(env, { tier: 3, units: 1, label: "claude" });
+    if (!booked.ok) {
+      // Said out loud, not swallowed: "the deep tier is out of budget tonight"
+      // and "the deep tier is broken" read identically from the answer alone.
+      if (typeof onRefusal === "function") onRefusal(booked.reason);
+      return null;
+    }
+  }
   try {
     const res = await fetch(ANTHROPIC_URL, {
       method: "POST",
@@ -177,12 +208,23 @@ export async function callCheap(env, { system, user, maxTokens = 900 }) {
  * Generate with the requested tier, falling back deep -> cheap -> nothing.
  * @returns {Promise<{text:string|null, model:string, errors:string[]}>}
  */
-export async function generate(env, { system, user, deep = false, maxTokens }) {
+export async function generate(env, { system, user, deep = false, maxTokens, billed = false }) {
   const errors = [];
   if (deep) {
-    const text = await callClaude(env, { system, user, maxTokens });
+    // Three different reasons the deep tier can come back empty, and they are
+    // not interchangeable: no key, no budget, or a call that failed. Collapsing
+    // them into "claude call failed" is how a night of cheap-tier answers gets
+    // read as a broken API key.
+    let refusal = "";
+    const text = await callClaude(env, { system, user, maxTokens, billed, onRefusal: (r) => { refusal = r; } });
     if (text) return { text, model: env.ANTHROPIC_MODEL || DEEP_MODEL, errors };
-    errors.push(env.ANTHROPIC_API_KEY ? "claude call failed" : "no ANTHROPIC_API_KEY, fell back to cheap");
+    errors.push(
+      !env.ANTHROPIC_API_KEY
+        ? "no ANTHROPIC_API_KEY, fell back to cheap"
+        : refusal
+          ? `the governor refused the deep tier (${refusal}), fell back to cheap`
+          : "claude call failed"
+    );
   }
   const out = await callCheap(env, { system, user, maxTokens });
   return { ...out, errors: [...errors, ...out.errors] };
@@ -197,6 +239,17 @@ export async function askBrain(env, question, { deep = false, topK = 10, categor
   if (!q) return { ok: false, error: "Ask me something." };
 
   const matches = await searchRefs(env, q, { topK, category });
+  // Retrieval that never ran must not be answered with "nothing matches that".
+  // Telling him to save more refs when the index rejected the query is the
+  // single most expensive lie this codebase has told itself.
+  if (matches.error) {
+    return {
+      ok: false,
+      error: `Retrieval failed, so this is not an empty archive: ${matches.error}`,
+      sources: [],
+      model: "none",
+    };
+  }
   if (!matches.length) {
     return {
       ok: true,
@@ -248,7 +301,7 @@ const PROFILE_INSTRUCTION = [
 ].join("\n");
 
 /**
- * The taste fingerprint future-outfit consumes for look matching.
+ * The archive's taste fingerprint, read back off its own newest refs.
  * Cached in KV for a day; pass refresh to rebuild.
  */
 export async function vibeProfile(env, { deep = true, refresh = false, sample = 60 } = {}) {

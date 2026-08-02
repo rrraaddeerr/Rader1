@@ -228,7 +228,16 @@ export function stalenessOf(ref, { now = new Date(), afterDays = STALE_AFTER_DAY
   // FALLBACK, never part of the max: a ref saved yesterday whose page was last
   // read a year ago is stale, and folding the save date in would report it as
   // fresh — which is exactly the ref this check exists to find.
-  const read = [ref.enrichedAt, ref.enrichTried, ref.linkCheckedAt]
+  //
+  // `captionTried` is in the list because the line above already trusts it as
+  // proof we tried, and the two halves have to agree. Fetching an image's bytes
+  // to caption it IS reading the source; leaving the stamp out meant a ref the
+  // vision job touched last night reported as "last read 944 days ago" from its
+  // import date, was queued for a recheck, was rechecked, and came back stale
+  // again on the next lap — the same finding for ever, which is a loop 3 that
+  // has learned nothing. `imageTried` is deliberately absent: enrich.js writes
+  // it as a boolean, so it can say THAT but never WHEN, and Date.parse drops it.
+  const read = [ref.enrichedAt, ref.enrichTried, ref.linkCheckedAt, ref.captionTried]
     .map((s) => Date.parse(s || ""))
     .filter((t) => Number.isFinite(t));
   const at = read.length ? Math.max(...read) : Date.parse(ref.createdAt || "");
@@ -1127,13 +1136,19 @@ export function summarizeGaps(gaps = []) {
  * a card in his queue — which is tier 0 and decides nothing. Only the jobs that
  * fetch facts (text, captions, embeddings) touch a ref, and those go through
  * the ladder, which already knows how to apply them.
+ *
+ * `runnable` is which of them a night can carry out on its own. Only `stage`
+ * cannot, and that is not a gap to close: staging IS asking him, and the audit
+ * has no business writing the answer. It is marked here rather than left
+ * implicit because fitBudget has to know — a job nothing can run must not take
+ * one of the twelve slots ahead of work that would actually happen.
  */
 export const ACTIONS = {
-  enrich: { tier: 0, vision: false, what: "fetch page text and a thumbnail (ladder rung 2)" },
-  caption: { tier: 2, vision: true, what: "vision caption the image (ladder rung 3)" },
-  reindex: { tier: 2, vision: false, what: "re-embed so retrieval sees the current content" },
-  recheck: { tier: 0, vision: false, what: "re-probe the link and re-read the page" },
-  stage: { tier: 0, vision: false, what: "queue a card for his thumb — decides nothing" },
+  enrich: { tier: 0, vision: false, runnable: true, what: "fetch page text and a thumbnail (ladder rung 2)" },
+  caption: { tier: 2, vision: true, runnable: true, what: "vision caption the image (ladder rung 3)" },
+  reindex: { tier: 2, vision: false, runnable: true, what: "re-embed so retrieval sees the current content" },
+  recheck: { tier: 0, vision: false, runnable: true, what: "re-probe the link and re-read the page" },
+  stage: { tier: 0, vision: false, runnable: false, what: "queue a card for his thumb — decides nothing" },
 };
 
 /** Which action a gap wants. Pure, so the mapping is inspectable and testable. */
@@ -1233,17 +1248,40 @@ export function rankJobs(jobs = []) {
  * REASON rather than dropped — "why didn't it do the vision work" has an answer
  * sitting in the run record instead of requiring an investigation.
  *
+ * A PLAN HAS TO BE EXECUTABLE TO BE A PLAN. Free work outranks paid work by
+ * design (see impactPerDollar), `stage` is free, and nothing anywhere executes
+ * a `stage` job — it is a card he has to swipe, which is the whole point of it.
+ * So a night with a normal crop of duplicates and contradictions used to fill
+ * every one of the twelve slots with work that would come back reported as
+ * unhandled, and defer the paid enrichment this loop exists to direct. Actions
+ * marked `runnable: false` in ACTIONS therefore never take a slot; they are
+ * deferred WITH A REASON, and the finding itself is still in `gaps`, so the
+ * duplicate he needs to see is not hidden — it is just not called a job.
+ *
+ * `can` narrows that further for a caller that knows what tonight can do.
+ *
  * Pure.
  *
  * @returns {{jobs:Array, deferred:Array, planned:number, visionPlanned:number}}
  */
-export function fitBudget(ranked = [], { budget = 0, visionLeft = 0, maxJobs = MAX_JOBS } = {}) {
+export function fitBudget(ranked = [], { budget = 0, visionLeft = 0, maxJobs = MAX_JOBS, can = null } = {}) {
   const taken = [];
   const deferred = [];
   let planned = 0;
   let visionPlanned = 0;
+  const stated = can && typeof can.has === "function" ? can : null;
+  const runnable = (action) => (stated ? stated.has(action) : ACTIONS[action]?.runnable !== false);
 
   for (const job of ranked) {
+    if (!runnable(job.action)) {
+      deferred.push({
+        ...job,
+        deferredWhy: stated
+          ? `nothing running tonight can carry out a "${job.action}" job`
+          : `a "${job.action}" job is not the night's to run — the finding is reported, the call is his`,
+      });
+      continue;
+    }
     if (taken.length >= maxJobs) {
       deferred.push({ ...job, deferredWhy: `only ${maxJobs} jobs fit in one night` });
       continue;
@@ -1316,6 +1354,7 @@ export async function planTonight(env, {
   now = new Date(),
   probe = true,
   maxJobs = MAX_JOBS,
+  can = null,
   ...thresholds
 } = {}) {
   const found = await findGaps(env, { cursor, limit, maxScan, now, probe, ...thresholds });
@@ -1328,7 +1367,7 @@ export async function planTonight(env, {
   const allowed = stated === null ? q.remaining : Math.max(0, stated - probeSpend);
 
   const ranked = rankJobs(jobsFor(found.gaps));
-  const fitted = fitBudget(ranked, { budget: allowed, visionLeft: q.visionLeft, maxJobs });
+  const fitted = fitBudget(ranked, { budget: allowed, visionLeft: q.visionLeft, maxJobs, can });
 
   return {
     jobs: fitted.jobs,

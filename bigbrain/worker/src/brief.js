@@ -541,6 +541,10 @@ async function synthesise(env, brief, { deep = false } = {}) {
     user: buildDigest(brief),
     deep: canDeep,
     maxTokens: 400,
+    // The tier-3 unit is already booked above. callClaude meters itself for the
+    // callers that don't (see its header); without this the brief would pay
+    // twice for one paragraph.
+    billed: true,
   });
   errors.push(...out.errors.map((e) => ({ stage: "model", error: e })));
 

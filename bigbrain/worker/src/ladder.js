@@ -104,6 +104,17 @@ const MAX_POOL = 200;
 const short = (err) => String(err?.message ?? err).slice(0, 240);
 const iso = (d) => (d instanceof Date ? d : new Date(d)).toISOString();
 
+/**
+ * Loop 2 reaches the ladder through here.
+ *
+ * `suppressed` is a Set of queue kinds the learner has decided he has answered
+ * enough times — it arrives from cron.js, which computes it once a night. A
+ * plain duck-type check rather than `instanceof Set` so a caller can pass any
+ * lookup it likes, and a missing one means "nothing is suppressed", which is
+ * the correct behaviour on night one and for every ad-hoc call.
+ */
+const isSuppressed = (set, kind) => Boolean(kind && set && typeof set.has === "function" && set.has(kind));
+
 // --------------------------------------------------------------- the failure axis
 
 /**
@@ -258,6 +269,17 @@ const SUMMARY_SYSTEM = [
  *              purpose: an image ref with no bytes anywhere DOES have a rung 3
  *              (so it honestly reports level 2, not level 3) but there is no
  *              call we could make to satisfy it.
+ * `proposes`   the queue kind this rung would ASK him about, so loop 2's
+ *              suppression can reach the ladder. Without this the learner can
+ *              silence the triage generators and the ladder keeps queueing the
+ *              same cards from 25 refs a night, which is the exact opposite of
+ *              "he swipes less each week".
+ * `asks`       WOULD this rung put a card in his queue for THIS ref? Only the
+ *              rungs that would are silenced, and only for the refs they would
+ *              actually ask about: a ref the classifier settles on its own is
+ *              not a question, so rung 1 still banks the record for it while
+ *              realm cards are suppressed. See nextStep() for why a suppressed
+ *              rung is skipped entirely rather than run with the asking off.
  * `run`        one attempt. Returns {ok, patch, staged, reason, permanent}.
  */
 export const RUNGS = [
@@ -273,6 +295,12 @@ export const RUNGS = [
     // question this rung asks, and re-asking it would be noise in his queue.
     satisfied: (ref) => Boolean(ref?.classified?.realm) || Boolean(ref?.realm),
     possible: () => true,
+    proposes: "realm",
+    // Only the refs the classifier cannot settle become cards, so only those
+    // are the ones loop 2 can silence. The rest of the archive keeps climbing
+    // this rung while realm is suppressed, which is the whole point of asking
+    // per ref rather than per rung.
+    asks: (ref) => lowConfidenceRealm(ref).length > 0,
     async run(env, ref) {
       const c = classify(classifyInput(ref));
       const patch = {
@@ -291,7 +319,10 @@ export const RUNGS = [
       };
 
       // Too weak to settle on its own goes to his thumb. propose() dedupes by
-      // target, so this is safe to run alongside cron's triage job.
+      // target, so this is safe to run alongside cron's triage job. Suppression
+      // never reaches here: nextStep() has already declined to offer this rung
+      // for a ref it would ask about, so a rung that runs is a rung allowed to
+      // ask, and there is no muted half-attempt to record.
       let staged = 0;
       const proposals = lowConfidenceRealm(ref);
       if (proposals.length) {
@@ -463,6 +494,12 @@ export const RUNGS = [
     // the answer is his.
     satisfied: (ref) => stepState(ref, 5)?.ok === true,
     possible: (ref) => taggableText(ref).length >= MIN_TAGGABLE_CHARS,
+    proposes: "tag",
+    // Nothing but the question comes out of this rung, so every ref it reaches
+    // is a ref it would ask about. Triage deliberately never runs tags either,
+    // which makes the ladder the only source of a tag card — one more reason
+    // not to let a suppressed night close the rung.
+    asks: () => true,
     async run(env, ref) {
       const proposals = tagProposals(ref);
       if (!proposals.length) {
@@ -534,10 +571,18 @@ export function levelOf(ref) {
  * The single next advance available for this ref, and what it costs.
  *
  * Walks up from the current level and returns the first rung that applies, is
- * unsatisfied, is possible, and is not blocked. Skipping over a blocked or
- * impossible rung is deliberate: an image we can't fetch bytes for still has a
- * title worth tagging, and stalling it forever at rung 3 would take free work
- * off the table for no gain.
+ * unsatisfied, is possible, is not blocked, and is not muted by loop 2.
+ * Skipping over a blocked or impossible rung is deliberate: an image we can't
+ * fetch bytes for still has a title worth tagging, and stalling it forever at
+ * rung 3 would take free work off the table for no gain.
+ *
+ * A muted rung is stepped over for the same reason. Suppression is a decision
+ * about what to ASK him, not about what the archive is allowed to learn: a ref
+ * whose realm card is silenced tonight still deserves its thumbnail, and
+ * freezing every ref the classifier can't settle — which is most of the
+ * Instagram half of the archive — would stop loop 1 dead every time loop 2
+ * disliked a generator. The ref reports the lower level until the question is
+ * asked, which is honest: the rung genuinely never happened.
  *
  * Pure. No I/O, no env, so it's safe to call inside a KV walk's filter.
  *
@@ -546,20 +591,37 @@ export function levelOf(ref) {
  * @param {Date}    [opts.now]     for backoff comparison, injectable for tests
  * @param {boolean} [opts.retry]   ignore permanent marks and backoff
  * @param {number}  [opts.maxTier] don't offer steps above this cost tier
+ * @param {number}  [opts.redo]    re-run THIS rung even though it's satisfied
+ * @param {Set}     [opts.suppressed] queue kinds loop 2 has silenced
  * @returns {{level:number, name:string, tier:number, vision:boolean,
  *   from:number, attempts:number, why:string}|null} null when topped out
  */
-export function nextStep(ref, { now = new Date(), retry = false, maxTier = Infinity } = {}) {
+export function nextStep(ref, { now = new Date(), retry = false, maxTier = Infinity, redo = 0, suppressed = null } = {}) {
   if (!ref || typeof ref !== "object") return null;
   const from = levelOf(ref);
 
   for (const rung of RUNGS) {
-    if (rung.level <= from) continue;
+    // `redo` is loop 3 saying "we last read this page a year ago, read it
+    // again". It re-opens exactly ONE rung, and only the one named. `retry` is
+    // the blunt instrument that re-opens all of them, and handing that to a
+    // staleness finding is how the vision ration gets spent every lap of the
+    // archive rediscovering the same permanent 403.
+    const forced = redo === rung.level;
+    if (!forced && rung.level <= from) continue;
     if (!rung.applies(ref)) continue;
-    if (rung.satisfied(ref)) continue;
+    if (!forced && rung.satisfied(ref)) continue;
     if (!rung.possible(ref)) continue;
     if (rung.tier > maxTier) continue;
-    if (isBlocked(ref, rung.level, { now, retry })) continue;
+    // Loop 2 reaching loop 1. A rung that would ask him a question he has
+    // stopped answering is not offered AT ALL — not offered with the asking
+    // turned off. Running it muted would record an attempt and, at rung 1,
+    // bank the record that `satisfied` reads, so that ref's question would be
+    // retired for good on a night we had decided not to ask it: suppression
+    // has to be reversible, and it is only reversible if it spends nothing and
+    // closes nothing. The kind check is first because it's a Set lookup and
+    // `asks()` runs the classifier.
+    if (isSuppressed(suppressed, rung.proposes) && rung.asks(ref)) continue;
+    if (isBlocked(ref, rung.level, { now, retry: retry || forced })) continue;
 
     const st = stepState(ref, rung.level);
     return {
@@ -568,11 +630,32 @@ export function nextStep(ref, { now = new Date(), retry = false, maxTier = Infin
       tier: rung.tier,
       vision: Boolean(rung.vision),
       from,
+      redo: forced,
       attempts: st?.attempts || 0,
-      why: st?.reason ? `retrying after: ${st.reason}` : `${rung.name} not yet attempted`,
+      why: forced
+        ? `${rung.name} re-run on request`
+        : st?.reason ? `retrying after: ${st.reason}` : `${rung.name} not yet attempted`,
     };
   }
   return null;
+}
+
+/**
+ * Why is there nothing to do for this ref? "Waiting on loop 2" and "genuinely
+ * finished" are the same empty answer from nextStep(), and a run record that
+ * says a ref topped out when it was really holding a question we weren't
+ * allowed to ask is a lie the nightly tells itself every night.
+ *
+ * Only runs when there is no step at all, so the second walk costs nothing on
+ * the path that does work.
+ */
+function mutedReason(ref, { suppressed, ...opts } = {}) {
+  const topped = "topped out — nothing available to climb";
+  if (!suppressed) return topped;
+  const unmuted = nextStep(ref, { ...opts, suppressed: null });
+  if (!unmuted) return topped;
+  const kind = RUNG_BY_LEVEL.get(unmuted.level)?.proposes || "";
+  return `waiting — ${unmuted.name} would ask a ${kind} question and ${kind} cards are suppressed`;
 }
 
 /**
@@ -595,20 +678,22 @@ export function nextStep(ref, { now = new Date(), retry = false, maxTier = Infin
  * @param {number}  [opts.tier=2]  the highest cost tier this climb may use
  * @param {Date}    [opts.now]
  * @param {boolean} [opts.retry]
+ * @param {number}  [opts.redo]     re-run this one rung even though it's done
+ * @param {Set}     [opts.suppressed] queue kinds loop 2 has silenced
  * @param {boolean} [opts.reindex=true] re-embed when the content changed
  * @returns {Promise<{ok:boolean, id:string, from:number, to:number,
  *   step:object|null, staged:number, spent:number, reason:string,
  *   permanent:boolean, errors:Array}>}
  */
-export async function climb(env, ref, { tier = 2, now = new Date(), retry = false, reindex = true } = {}) {
+export async function climb(env, ref, { tier = 2, now = new Date(), retry = false, reindex = true, redo = 0, suppressed = null } = {}) {
   const id = ref?.id || "";
   const from = levelOf(ref);
   const base = { ok: false, id, from, to: from, step: null, staged: 0, spent: 0, reason: "", permanent: false, errors: [] };
 
   if (!id) return { ...base, reason: "ref has no id" };
 
-  const step = nextStep(ref, { now, retry });
-  if (!step) return { ...base, reason: "topped out — nothing available to climb" };
+  const step = nextStep(ref, { now, retry, redo, suppressed });
+  if (!step) return { ...base, reason: mutedReason(ref, { now, retry, redo, suppressed }) };
   if (step.tier > tier) {
     // Not an attempt and not a failure: we simply weren't allowed to try, and
     // burning a retry slot for that would punish the ref for our budget.
@@ -741,11 +826,15 @@ async function flag(env, key, patch) {
  * @param {number}  [opts.limit=25] max refs in the cohort
  * @param {string}  [opts.cursor]  KV cursor from the previous call
  * @param {number}  [opts.tier=2]  highest cost tier the cohort may include
+ * @param {Set}     [opts.suppressed] queue kinds loop 2 has silenced. A ref
+ *                                 left with nothing but a muted rung is not a
+ *                                 candidate — selecting it would spend a cohort
+ *                                 slot to discover we aren't allowed to ask.
  * @returns {Promise<{items:Array, scanned:number, unreadable:number,
  *   cursor:string|null, done:boolean, levels:object, plan:object,
  *   error:string|null}>}
  */
-export async function selectCohort(env, { budget, limit = 25, cursor, tier = 2, now = new Date(), retry = false, maxScan = MAX_SCAN } = {}) {
+export async function selectCohort(env, { budget, limit = 25, cursor, tier = 2, now = new Date(), retry = false, maxScan = MAX_SCAN, suppressed = null } = {}) {
   const want = Math.max(1, Math.min(Number(limit) || 25, 200));
   const pool = Math.min(want * POOL_FACTOR, MAX_POOL);
 
@@ -757,7 +846,7 @@ export async function selectCohort(env, { budget, limit = 25, cursor, tier = 2, 
     cursor,
     want: pool,
     maxScan,
-    pick: (ref) => nextStep(ref, { now, retry, maxTier: tier }) !== null,
+    pick: (ref) => nextStep(ref, { now, retry, maxTier: tier, suppressed }) !== null,
   });
 
   const plan = { allowed, planned: 0, visionLeft, visionPlanned: 0, considered: 0, skippedForBudget: 0 };
@@ -766,7 +855,7 @@ export async function selectCohort(env, { budget, limit = 25, cursor, tier = 2, 
   }
 
   const candidates = walk.refs
-    .map(({ ref }) => ({ ref, step: nextStep(ref, { now, retry, maxTier: tier }) }))
+    .map(({ ref }) => ({ ref, step: nextStep(ref, { now, retry, maxTier: tier, suppressed }) }))
     .filter((c) => c.step)
     .sort(
       (a, b) =>

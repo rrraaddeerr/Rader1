@@ -77,7 +77,7 @@ import { enrichRef } from "./enrich.js";
 import { brainReady, indexRef, embedTextFor } from "./embed.js";
 import { planTonight } from "./selfgaps.js";
 import { climb, selectCohort, LEVEL_NAMES } from "./ladder.js";
-import { acceptance, shouldSuppress } from "./learn.js";
+import { acceptance, shouldSuppress, probeRoll as learnedProbeRoll } from "./learn.js";
 import { buildMapTree } from "./mapdata.js";
 
 /** Run records: one per UTC day, which is the same day the ledger uses. */
@@ -103,23 +103,44 @@ export const JOBS = ["gaps", "triage", "ladder", "embed", "enrich", "vision", "m
 /** Proposal generators the nightly is allowed to run. See jobTriage(). */
 export const TRIAGE_KINDS = ["dead-link", "realm"];
 
+/**
+ * Every queue kind loop 2 rules on, across the whole night.
+ *
+ * Wider than TRIAGE_KINDS, and that is the fix rather than an oversight. The
+ * ladder stages `realm` cards at rung 1 and `tag` cards at rung 5 on 25 refs a
+ * night, and for as long as suppression only gated triage a generator he had
+ * rejected twenty times running was silenced in one job and left running in the
+ * other — so the queue kept filling with exactly the cards the learner had just
+ * decided to stop asking. `tag` never appears in TRIAGE_KINDS at all, which
+ * made the ladder its ONLY source and therefore completely ungoverned.
+ */
+export const LEARNED_KINDS = ["dead-link", "realm", "tag"];
+
 /** Loop 3 actions the ladder can actually execute, and how. */
 const CLIMB_ACTIONS = new Set(["enrich", "caption", "recheck"]);
 
 /**
+ * Every loop 3 action this file can carry out tonight.
+ *
+ * `stage` is missing on purpose and that absence is load-bearing — see
+ * jobLadder's `unhandled`. Handing it to planTonight() means an unrunnable job
+ * is deferred with a reason instead of eating one of the twelve slots ahead of
+ * the paid enrichment, which is what happens otherwise: free work outranks paid
+ * work by design, and `stage` is free.
+ */
+const EXECUTABLE_ACTIONS = new Set([...CLIMB_ACTIONS, "reindex"]);
+
+/**
  * A stable 0..1 roll for tonight's suppression probes.
  *
- * FNV-1a over the day and the generator name. Same night, same answer — so a
- * run can be re-run and explained — while a different night rolls differently,
- * which is what keeps a suppressed generator's one-in-ten door open.
+ * Delegates to learn.js rather than hashing again here. Two hashes over the
+ * same two strings looked harmless and were not: this file rolled for the
+ * generators while `/api/learn/score` explained them with the other one, so the
+ * run record could say a kind probed on Tuesday while the card that was
+ * supposed to explain the run said it had been silent. One roll, one answer.
  */
 export function probeRoll(day, kind) {
-  let h = 2166136261;
-  for (const ch of `${day}:${kind}`) {
-    h ^= ch.charCodeAt(0);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h / 4294967296;
+  return learnedProbeRoll(kind, day);
 }
 
 /**
@@ -455,6 +476,9 @@ async function jobGaps(env, { cap, cursor, night }) {
     // probes are the only paid part of it.
     probe: cap > 0,
     probeLimit: cap,
+    // Plan only what tonight can actually do. Everything else still appears in
+    // `gaps` and in `deferred` with a reason, so nothing is quietly dropped.
+    can: EXECUTABLE_ACTIONS,
   });
 
   if (out.error) {
@@ -507,21 +531,15 @@ async function jobGaps(env, { cap, cursor, night }) {
  * evidence that it improved. With no learned signal nothing is suppressed, which
  * is the correct behaviour on night one.
  */
-async function jobTriage(env, { cap, cursor, source, night, day }) {
-  const stats = night.stats;
+async function jobTriage(env, { cursor, cap, source, night }) {
   const kinds = [];
   const suppressed = [];
   const probing = [];
 
   for (const kind of TRIAGE_KINDS) {
-    // Deterministic roll, not Math.random(). A night has to be explainable
-    // afterwards — "why did it ask me about tags again on Tuesday" wants an
-    // answer, and a run that can't be reproduced can't be tested either. The
-    // day is in the hash, so the probe still comes round about one night in
-    // ten per generator; it just comes round on a night we can name.
-    const verdict = shouldSuppress(stats, kind, { roll: probeRoll(day, kind) });
-    if (verdict.suppress) { suppressed.push(`${kind}: ${verdict.reason}`); continue; }
-    if (verdict.probe) probing.push(`${kind}: ${verdict.reason}`);
+    const verdict = night.verdicts?.[kind];
+    if (verdict?.suppress) { suppressed.push(`${kind}: ${verdict.reason}`); continue; }
+    if (verdict?.probe) probing.push(`${kind}: ${verdict.reason}`);
     kinds.push(kind);
   }
 
@@ -606,9 +624,20 @@ async function jobLadder(env, { cap, cursor, retry, night }) {
     if (!job || !Array.isArray(job.refIds)) continue;
     if (job.action === "reindex") { reindexIds.push(...job.refIds); continue; }
     if (CLIMB_ACTIONS.has(job.action)) {
-      // `recheck` is loop 3 saying "we looked at this a year ago" — the rung is
-      // satisfied, so only a retry re-opens it.
-      for (const id of job.refIds) directed.push({ id, retry: retry || job.action === "recheck" });
+      // `recheck` is loop 3 saying "we last read this page a year ago" — rung 2
+      // is satisfied, so it has to be re-opened by name.
+      //
+      // It used to be re-opened with `retry`, which re-opens EVERY rung on the
+      // ref, and that quietly cost twice over. The re-read never happened —
+      // retry does not step past `satisfied`, so the climb reported "topped
+      // out" and the stamp the staleness check reads was never refreshed, so
+      // the identical finding came back on every lap of the archive for ever.
+      // Meanwhile any PAID rung the ref had permanently closed (an Instagram
+      // 403 at rung 3) was reopened and re-charged against the 20-a-night
+      // vision ration, which is precisely the leak the permanent/transient
+      // split exists to stop. `redo` re-opens the one rung and nothing else.
+      const redo = job.action === "recheck" ? 2 : 0;
+      for (const id of job.refIds) directed.push({ id, redo });
       continue;
     }
     // `stage` is the one action this file cannot execute: selfgaps knows a pair
@@ -628,7 +657,7 @@ async function jobLadder(env, { cap, cursor, retry, night }) {
   let spent = 0;
 
   // ---- 1. the directed work
-  for (const { id, retry: force } of directed) {
+  for (const { id, redo } of directed) {
     if (climbed.length >= cap) break;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -642,7 +671,7 @@ async function jobLadder(env, { cap, cursor, retry, night }) {
     }
     if (!ref) continue; // deleted since the audit read it
 
-    const res = await climb(env, ref, { retry: force });
+    const res = await climb(env, ref, { retry, redo, suppressed: night.suppressed });
     errors.push(...(res.errors || []));
     spent += res.spent || 0;
     // Loop 3 named it, but the ladder may already have taken it as far as it
@@ -658,7 +687,7 @@ async function jobLadder(env, { cap, cursor, retry, night }) {
   // ---- 2. top up, breadth-first
   let walk = { cursor, done: false, scanned: 0, levels: {}, plan: null };
   if (!stopped && climbed.length < cap) {
-    const cohort = await selectCohort(env, { limit: cap - climbed.length, cursor: cursor || undefined, retry });
+    const cohort = await selectCohort(env, { limit: cap - climbed.length, cursor: cursor || undefined, retry, suppressed: night.suppressed });
     if (cohort.error) {
       errors.push({ stage: "kv", error: cohort.error });
     } else {
@@ -667,7 +696,7 @@ async function jobLadder(env, { cap, cursor, retry, night }) {
         if (climbed.length >= cap) break;
         if (seen.has(ref.id)) continue;
         seen.add(ref.id);
-        const res = await climb(env, ref, { retry });
+        const res = await climb(env, ref, { retry, suppressed: night.suppressed });
         errors.push(...(res.errors || []));
         spent += res.spent || 0;
         if (!res.step) { toppedOut++; continue; }
@@ -966,7 +995,10 @@ async function jobVision(env, { cap, cursor, retry }) {
 
     let patch;
     try {
-      patch = await enrichRef(env, ref);
+      // `billed` because the ration unit above IS this call's unit. enrichRef
+      // meters its own vision branch for the callers that don't (see its
+      // header); letting it charge again here would halve the ration to ten.
+      patch = await enrichRef(env, ref, undefined, { billed: true });
     } catch (err) {
       errors.push({ stage: "vision", refId: ref.id, error: short(err) });
       continue;
@@ -1168,9 +1200,23 @@ export async function runNightly(env, ctx, { now = new Date(), dryRun = false, j
    * per-generator read would be the same KV get four times, and a rollup that
    * changed mid-run would suppress a kind the record said was allowed.
    */
-  const night = { work: Array.isArray(record.work) ? record.work : [], stats: null };
+  const night = { work: Array.isArray(record.work) ? record.work : [], stats: null, verdicts: {}, suppressed: new Set() };
 
   night.stats = await acceptance(env);
+
+  // Loop 2's verdicts, decided ONCE for the night and shared by every job that
+  // could put a card in his queue. Deterministic roll, not Math.random(): a
+  // night has to be explainable afterwards — "why did it ask me about tags
+  // again on Tuesday" wants an answer — and a run that can't be reproduced
+  // can't be tested either. The day is in the hash, so a suppressed generator's
+  // probe still comes round about one night in ten; it just comes round on a
+  // night we can name.
+  for (const kind of LEARNED_KINDS) {
+    const verdict = shouldSuppress(night.stats, kind, { day });
+    night.verdicts[kind] = verdict;
+    if (verdict.suppress) night.suppressed.add(kind);
+  }
+
   record.learn = {
     ok: night.stats.ok,
     source: night.stats.source || "",
@@ -1179,6 +1225,10 @@ export async function runNightly(env, ctx, { now = new Date(), dryRun = false, j
     error: night.stats.error || null,
     decided: night.stats.totals?.n ?? null,
     enough: Boolean(night.stats.enough),
+    // Recorded whether or not anything was suppressed: "nothing was suppressed"
+    // is a finding, and an empty field reads as "the learner never ran".
+    suppressed: [...night.suppressed],
+    probing: LEARNED_KINDS.filter((k) => night.verdicts[k]?.probe),
   };
   if (night.stats.error) record.errors.push({ job: "learn", error: night.stats.error });
   // The record belongs to the NIGHT, not to one invocation of it: `did` and

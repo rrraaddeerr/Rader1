@@ -120,22 +120,49 @@ export async function unindexRef(env, id) {
 }
 
 /**
+ * Carry a failure out on the array itself.
+ *
+ * The array shape is what every caller already reads, and changing it would
+ * touch the router. But a rejected Vectorize query and an honest no-match are
+ * the same empty array otherwise — the conflation that cost this project hours
+ * three separate times — so the reason rides along as a non-enumerable `error`.
+ * Non-enumerable so JSON.stringify, spread and every array method behave
+ * exactly as they did; `matches.error` is the only thing that changes.
+ */
+function withError(matches, error) {
+  Object.defineProperty(matches, "error", { value: error || null, enumerable: false });
+  return matches;
+}
+
+/**
  * Nearest refs to a query string.
- * @returns {Promise<Array<{id:string, score:number, metadata:object}>>}
+ *
+ * Read `.error` before believing an empty result. "The archive has nothing on
+ * that" and "we never got to ask" must not read the same to a caller.
+ *
+ * @returns {Promise<Array<{id:string, score:number, metadata:object}> & {error:string|null}>}
  */
 export async function searchRefs(env, query, { topK = 12, category = "", realm = "" } = {}) {
+  if (!brainReady(env)) return withError([], "AI/VECTORS not bound — nothing was searched");
   const vector = await embedOne(env, query);
-  if (!vector) return [];
+  // embed() reports null for an unbound binding and for a call that threw, and
+  // neither of those is "no match" — the question never reached the index.
+  if (!vector) return withError([], "couldn't embed the question — the embedding call returned nothing");
   return searchRefsByVector(env, vector, { topK, category, realm });
 }
 
-/** Nearest refs to an existing vector (used by /api/similar). */
+/**
+ * Nearest refs to an existing vector (used by /api/similar).
+ *
+ * @returns {Promise<Array<{id:string, score:number, metadata:object}> & {error:string|null}>}
+ */
 export async function searchRefsByVector(
   env,
   vector,
   { topK = 12, category = "", realm = "", exclude = "" } = {}
 ) {
-  if (!brainReady(env) || !vector) return [];
+  if (!brainReady(env)) return withError([], "AI/VECTORS not bound — nothing was searched");
+  if (!vector) return withError([], "no vector to search with");
   try {
     // Over-fetch so post-filtering still returns a full page. Filtering in JS
     // rather than via Vectorize metadata indexes keeps setup to one command.
@@ -154,13 +181,20 @@ export async function searchRefsByVector(
     if (exclude) matches = matches.filter((m) => m.id !== exclude);
     if (category) matches = matches.filter((m) => m.metadata?.category === category);
     if (realm) matches = matches.filter((m) => m.metadata?.realm === realm);
-    return matches.slice(0, topK).map((m) => ({
-      id: m.id,
-      score: typeof m.score === "number" ? m.score : 0,
-      metadata: m.metadata || {},
-    }));
-  } catch {
-    return [];
+    return withError(
+      matches.slice(0, topK).map((m) => ({
+        id: m.id,
+        score: typeof m.score === "number" ? m.score : 0,
+        metadata: m.metadata || {},
+      })),
+      null
+    );
+  } catch (err) {
+    // NEVER `catch { return [] }` here. A rejected query — the topK ceiling
+    // above is the one that keeps biting — renders as "nothing matched" if the
+    // reason is dropped, and the archive then reports a clean bill of health
+    // while retrieval is dead. See §6.2 of HANDOFF.md.
+    return withError([], `vector query failed: ${String(err?.message ?? err).slice(0, 240)}`);
   }
 }
 
