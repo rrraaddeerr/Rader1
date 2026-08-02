@@ -405,8 +405,14 @@ const run = async () => {
     // be a new reference, which is the one thing this file may never create.
     const written = env.REFS_KV.puts.filter((k) => k.startsWith("ref:"));
     ok("every ref write landed on an existing ref", written.every((k) => before.has(k)));
+    // Each learning loop earned a namespace: learn: for swipe outcomes,
+    // selfgaps: for the nightly audit, map: for the cached region tree, brief:
+    // for the morning page. The assertion is not about keeping this list short —
+    // it is about the job staying inside namespaces it declared, because the
+    // failure we actually fear (inventing a reference) lives in exactly that gap.
     ok("and nothing outside the known prefixes was written",
-      env.REFS_KV.puts.every((k) => /^(ref:|stage:|budget:|nightly:)/.test(k)));
+      env.REFS_KV.puts.every((k) =>
+        /^(ref:|stage:|budget:|nightly:|learn:|selfgaps:|map:|brief:)/.test(k)));
 
     // It indexes only refs it read out of KV.
     ok("only known refs reached the index", env.VECTORS.upserted.every((id) => before.has(`ref:${id}`)));
@@ -436,6 +442,44 @@ const run = async () => {
     const out = await runNightly({}, ctx, { now: NOW });
     eq("with no KV it refuses honestly", out.ok, false);
     ok("and says what is missing", /REFS_KV/.test(out.error));
+  }
+
+  // ------------------------------------------- the three loops, orchestrated
+  // The whole point of the expansion: the night is not a fixed script. Loop 3
+  // audits and plans, loop 1 climbs the ladder inside that plan, loop 2's
+  // learned stats shape what gets queued. If these run but don't feed each
+  // other, this is a cron job wearing a learning system's clothes.
+  {
+    const env = makeEnv();
+    const out = await runNightly(env, ctx, { now: NOW });
+
+    ok("the audit ran first and planned the night", Boolean(out.jobs.gaps));
+    ok("the ladder ran", Boolean(out.jobs.ladder));
+
+    // Loop 3 -> loop 1, asserted structurally rather than by matching log prose:
+    // `directed` is the count of refs the audit handed the ladder. A regex over
+    // the wording would pass until someone reworded a log line.
+    ok("the audit directed the ladder's work", out.jobs.ladder.detail?.directed > 0);
+    ok("and the ladder actually advanced them", out.jobs.ladder.detail?.advanced > 0);
+
+    // Loop 2 is consulted before anything is queued, so a generator he has
+    // been rejecting can be held back.
+    ok("swipe outcomes were consulted", env.REFS_KV.puts.some((k) => k.startsWith("learn:")) ||
+      JSON.stringify(out.jobs).includes("suppress"));
+
+    // Nothing above may have applied a taste call directly.
+    ok("every taste call went to the queue", env.REFS_KV.puts.some((k) => k.startsWith("stage:")));
+  }
+
+  // ------------------------------------------------ the night is reproducible
+  // Suppression probes used to be Math.random(), which made a run impossible to
+  // explain after the fact and the pipeline impossible to test. Two runs from
+  // the same state must now make the same decisions.
+  {
+    const a = await runNightly(makeEnv(), ctx, { now: NOW });
+    const b = await runNightly(makeEnv(), ctx, { now: NOW });
+    const shape = (r) => Object.fromEntries(Object.entries(r.jobs).map(([k, v]) => [k, v.status]));
+    eq("same state, same decisions", JSON.stringify(shape(a)), JSON.stringify(shape(b)));
   }
 
   globalThis.fetch = realFetch;

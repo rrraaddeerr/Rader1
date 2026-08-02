@@ -355,7 +355,7 @@ export function lowConfidenceRealm(ref) {
  * purpose: it's long, and one stray anchor word in it would flip a ref out of
  * "needs help" and quietly hide it from this queue.
  */
-function classifyInput(ref, t = targetOf(ref)) {
+export function classifyInput(ref, t = targetOf(ref)) {
   return {
     type: ref.type || ref.Type || "",
     sourceApp: ref.sourceApp || ref["Source App"] || "",

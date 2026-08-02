@@ -65,15 +65,6 @@ const AI = {
     }
     aiCalls.chat++;
     const q = input.messages?.[1]?.content || "";
-    if (q.includes("Draft a client Set")) {
-      // Includes one hallucinated id on purpose — the worker must drop it.
-      return {
-        response:
-          '```json\n{"title":"Cold Steel","note":"Hospital-adjacent, hard light.",' +
-          '"sections":[{"name":"Cases & Carts","items":[{"id":"vpc-1","why":"the gauges"},{"id":"vpc-999","why":"invented"}]}],' +
-          '"gaps":["nothing soft"]}\n```',
-      };
-    }
     return { response: "Answering from the archive [1]. " + (q.includes("CONTEXT") ? "context received" : "no context") };
   },
 };
@@ -98,8 +89,7 @@ function makeIndex() {
 }
 
 const VECTORS = makeIndex();
-const INV_VECTORS = makeIndex();
-const env = { AUTH_TOKEN: "dev", REFS_KV: makeKV(), AI, VECTORS, INV_VECTORS };
+const env = { AUTH_TOKEN: "dev", REFS_KV: makeKV(), AI, VECTORS };
 const TOK = { "X-Auth-Token": "dev" };
 const JSONH = { ...TOK, "Content-Type": "application/json" };
 const call = (path, opts = {}) =>
@@ -123,7 +113,6 @@ const run = async () => {
   let r = await call("/health");
   let d = await r.json();
   eq("health says brain on", d.brain, true);
-  eq("health says inventory on", d.inventory, true);
   eq("health says deep off (no key)", d.deep, false);
 
   // save indexes immediately
@@ -203,57 +192,6 @@ const run = async () => {
   eq("reindex is done in one batch", d.done, true);
   ok("reindex indexed the refs", d.indexed >= 2);
 
-  // inventory
-  r = await call("/api/inventory/index", {
-    method: "POST",
-    headers: JSONH,
-    body: JSON.stringify({
-      items: [
-        { id: "vpc-1", title: "Bedside Table", description: "Stainless top with gauges, aged", category: "Cases & Carts" },
-        { id: "vpc-2", title: "Velvet Sofa", description: "Deep green velvet, tufted", category: "Seating" },
-      ],
-    }),
-  });
-  d = await r.json();
-  eq("inventory indexed", d.indexed, 2);
-
-  r = await call("/api/match", { method: "POST", headers: JSONH, body: JSON.stringify({ q: "stainless steel gauges" }) });
-  d = await r.json();
-  eq("match ok", d.ok, true);
-  eq("match found the right item", d.items[0].id, "vpc-1");
-  eq("match reports how it read the input", d.via, "text");
-
-  // match by an existing ref
-  r = await call("/api/match", { method: "POST", headers: JSONH, body: JSON.stringify({ refId: cartId }) });
-  d = await r.json();
-  eq("match by ref id works", d.via, "ref");
-
-  // match by raw image bytes goes through the vision model
-  const visionBefore = aiCalls.vision;
-  r = await call("/api/match", { method: "POST", headers: { ...TOK, "Content-Type": "image/png" }, body: new Uint8Array([1, 2, 3]) });
-  d = await r.json();
-  eq("match by image works", d.via, "vision");
-  ok("vision model was called", aiCalls.vision === visionBefore + 1);
-
-  // set drafting from a brief
-  r = await call("/api/set-draft", {
-    method: "POST",
-    headers: JSONH,
-    body: JSON.stringify({ brief: "cold hospital corridor, stainless, gauges" }),
-  });
-  d = await r.json();
-  eq("set-draft ok", d.ok, true);
-  eq("draft title", d.draft.title, "Cold Steel");
-  eq("draft has one section", d.draft.sections.length, 1);
-  eq("hallucinated ids are dropped", d.draft.sections[0].items.length, 1);
-  eq("kept the real item", d.draft.sections[0].items[0].id, "vpc-1");
-  ok("picks carry a reason", d.draft.sections[0].items[0].why.length > 0);
-  eq("gaps come through", d.draft.gaps[0], "nothing soft");
-  ok("candidates returned for override", d.candidates.length > 0);
-
-  r = await call("/api/set-draft", { method: "POST", headers: JSONH, body: JSON.stringify({ brief: "" }) });
-  eq("empty brief -> 400", r.status, 400);
-
   // profile
   r = await call("/api/profile", { headers: TOK });
   d = await r.json();
@@ -267,9 +205,6 @@ const run = async () => {
     ["/api/similar/x", {}],
     ["/api/profile", {}],
     ["/api/reindex", { method: "POST" }],
-    ["/api/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }],
-    ["/api/set-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }],
-    ["/api/inventory/index", { method: "POST", headers: { "Content-Type": "application/json" }, body: "[]" }],
   ]) {
     const res = await call(path, opts);
     eq(`${path} without token -> 401`, res.status, 401);

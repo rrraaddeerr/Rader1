@@ -13,12 +13,31 @@
  * *his patience with a swipe queue* are. A pass that queued 200 questions a
  * night would cost pennies and still be a failure.
  *
- * Four jobs, cheapest first, each stopping the instant the governor says no:
+ * Seven jobs, each stopping the instant the governor says no:
  *
- *   triage  Tier 0  dead links + realms too weak to settle, staged as proposals
+ *   gaps    Tier 0/2 LOOP 3 — the archive audits itself and writes tonight's
+ *                    work list. Runs FIRST because it is the directive the jobs
+ *                    below it follow, not because it is the cheapest. Its only
+ *                    spend is a handful of probe embeddings which it charges
+ *                    itself and degrades without; it can never stop the night.
+ *   triage  Tier 0  dead links + realms too weak to settle, staged as proposals.
+ *                    LOOP 2 decides which generators are still allowed to ask:
+ *                    a kind he has rejected 15 times running is suppressed, with
+ *                    a one-in-ten probe so suppression stays reversible.
+ *   ladder  Tier 0/2 LOOP 1 — every ref climbs one rung, working the ref ids
+ *                    loop 3 named first and topping up with the ladder's own
+ *                    breadth-first cohort.
  *   embed   Tier 0/2 refs in KV with no vector in the index — detect free, fill paid
  *   enrich  Tier 2  refs with no body yet: page text or transcript, then re-embed
  *   vision  Tier 2  image refs with no caption, strictly inside the 20/night ration
+ *   map     Tier 0  rebuild the phone map. Last because it is the heaviest walk
+ *                    in the file (up to 5,000 KV reads and 120 vector queries)
+ *                    and a build that dies must not take the paid work with it.
+ *                    It overwrites atomically, so last night's map survives.
+ *
+ * The three loops are ordered the way they depend on each other: loop 3 plans
+ * the night, loop 1 climbs inside that plan, and loop 2's learned acceptance
+ * rates shape what reaches his queue. None of them can apply a taste judgment.
  *
  * What it may and may not do:
  *   - It NEVER adds a ref. There is no code path in this file that can create
@@ -56,6 +75,10 @@ import {
 import { runProposalPass } from "./propose.js";
 import { enrichRef } from "./enrich.js";
 import { brainReady, indexRef, embedTextFor } from "./embed.js";
+import { planTonight } from "./selfgaps.js";
+import { climb, selectCohort, LEVEL_NAMES } from "./ladder.js";
+import { acceptance, shouldSuppress } from "./learn.js";
+import { buildMapTree } from "./mapdata.js";
 
 /** Run records: one per UTC day, which is the same day the ledger uses. */
 export const RUN_PREFIX = "nightly:";
@@ -66,8 +89,38 @@ export const CURSOR_KEY = "nightly:cursors";
 /** A run record key, and nothing else under the prefix, looks like this. */
 const RUN_KEY_RE = /^nightly:\d{4}-\d{2}-\d{2}$/;
 
-/** Cheapest first. The order is the policy; don't reorder without a reason. */
-export const JOBS = ["triage", "embed", "enrich", "vision"];
+/**
+ * The order is the policy; don't reorder without a reason.
+ *
+ * Plan first, then cheapest-first among the workers, then the heavy free walk.
+ * `gaps` leads because everything below it reads its work list, and it is safe
+ * there: it never stops the night, it degrades to a free audit when the governor
+ * refuses its probes, and with no Vectorize it still finds stale and duplicate
+ * refs deterministically.
+ */
+export const JOBS = ["gaps", "triage", "ladder", "embed", "enrich", "vision", "map"];
+
+/** Proposal generators the nightly is allowed to run. See jobTriage(). */
+export const TRIAGE_KINDS = ["dead-link", "realm"];
+
+/** Loop 3 actions the ladder can actually execute, and how. */
+const CLIMB_ACTIONS = new Set(["enrich", "caption", "recheck"]);
+
+/**
+ * A stable 0..1 roll for tonight's suppression probes.
+ *
+ * FNV-1a over the day and the generator name. Same night, same answer — so a
+ * run can be re-run and explained — while a different night rolls differently,
+ * which is what keeps a suppressed generator's one-in-ten door open.
+ */
+export function probeRoll(day, kind) {
+  let h = 2166136261;
+  for (const ch of `${day}:${kind}`) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h / 4294967296;
+}
 
 /**
  * Per-night caps. Deliberately small.
@@ -78,10 +131,18 @@ export const JOBS = ["triage", "embed", "enrich", "vision"];
  * many new cards he'll find in the queue at breakfast.
  */
 export const NIGHTLY_LIMITS = {
+  // Probe embeddings the audit may buy — six is about a tenth of a cent, and
+  // the probes are the only part of loop 3 that isn't deterministic.
+  gaps: 6,
   triage: 60,
+  // Refs that climb a rung. Breadth is the point: 25 refs one rung deeper beats
+  // 5 refs four rungs deeper, because level 2 is what stops /browse being grey.
+  ladder: 25,
   embed: 50,
   enrich: 25,
   vision: DEFAULT_VISION_RATION,
+  // One rebuild. The number is a formality; buildMapTree has its own bounds.
+  map: 1,
 };
 
 /** KV page size while hunting for candidates. */
@@ -342,7 +403,13 @@ async function writeRun(env, record) {
  */
 async function planFor(env, wanted, caps) {
   const jobs = {};
+  // The audit's probes and the ladder's rungs are both tier 2 at their most
+  // expensive; the two free jobs are quoted anyway so the record shows every
+  // job was considered, not just the ones that cost something.
+  jobs.gaps = await quote(env, { tier: 2, units: caps.gaps });
   jobs.triage = await quote(env, { tier: 0, units: caps.triage });
+  jobs.ladder = await quote(env, { tier: 2, units: caps.ladder });
+  jobs.map = await quote(env, { tier: 0, units: caps.map });
   jobs.embed = await quote(env, { tier: 2, units: caps.embed });
   jobs.enrich = await quote(env, { tier: 2, units: caps.enrich });
   jobs.vision = await quote(env, { tier: 2, units: caps.vision, vision: true });
@@ -365,6 +432,64 @@ async function planFor(env, wanted, caps) {
   };
 }
 
+// ------------------------------------------------------------------ job: gaps
+
+/**
+ * LOOP 3. The archive audits itself and hands the rest of the night a work list.
+ *
+ * This is what makes the nightly a learning system rather than a cron job: the
+ * work isn't a fixed script, it's whatever the archive currently can't do — the
+ * regions with no text behind them, the questions its own vectors answer
+ * weakly, the refs last read a year ago, the near-duplicates.
+ *
+ * It can never stop the night. `planTonight` charges for its own probes and
+ * carries on without them when refused, and with no Vectorize the deterministic
+ * detectors still produce real jobs — so this job reports and moves on rather
+ * than gating the jobs below it. The work list lands on `night.work`, which
+ * jobLadder reads and the run record keeps.
+ */
+async function jobGaps(env, { cap, cursor, night }) {
+  const out = await planTonight(env, {
+    cursor: cursor || undefined,
+    // The audit's own spend comes out of tonight's remaining ceiling, and the
+    // probes are the only paid part of it.
+    probe: cap > 0,
+    probeLimit: cap,
+  });
+
+  if (out.error) {
+    return { skipped: true, reason: out.error, errors: [{ stage: "gaps", error: out.error }], cursor };
+  }
+
+  night.work = out.jobs;
+  const errors = (out.errors || []).map((e) => (typeof e === "object" ? e : { stage: "gaps", error: String(e) }));
+  const kinds = Object.entries(out.summary?.byKind || {})
+    .map(([k, n]) => `${n} ${k}`)
+    .join(", ");
+
+  return {
+    scanned: out.scanned,
+    cursor: out.cursor,
+    done: Boolean(out.done),
+    detail: {
+      gaps: out.summary?.gaps ?? 0,
+      byKind: out.summary?.byKind || {},
+      refs: out.summary?.refs ?? 0,
+      jobs: out.jobs.length,
+      deferred: out.deferred.length,
+      plannedCost: out.plan?.planned ?? 0,
+      probes: { ran: out.probes?.ran ?? 0, spent: out.probes?.spent ?? 0, error: out.probes?.error || null, skipped: out.probes?.skipped || "" },
+      degraded: Boolean(out.degraded),
+      sampled: out.sampled,
+      // The one-liners, not the whole job objects — the run record is read on a
+      // phone at breakfast and 300 ref ids are not a sentence.
+      lines: out.jobs.map((j) => j.line).slice(0, 12),
+    },
+    errors,
+    line: `gaps: ${out.summary?.gaps ?? 0} found${kinds ? ` (${kinds})` : ""}, ${out.jobs.length} jobs planned for tonight`,
+  };
+}
+
 // ---------------------------------------------------------------- job: triage
 
 /**
@@ -374,10 +499,41 @@ async function planFor(env, wanted, caps) {
  * A ref only carries one pending question at a time, and a nightly that queues
  * three kinds of question per ref buries the two that matter under the one that
  * doesn't. Tags stay a thing he asks for by hand.
+ *
+ * LOOP 2 sits in front of the generators. A kind whose cards he has rejected
+ * enough times, with enough evidence, stops being asked — the promise is that he
+ * swipes LESS each week, not more. About one suppressed pass in ten runs anyway
+ * as a probe, because a generator that is silenced forever can never produce the
+ * evidence that it improved. With no learned signal nothing is suppressed, which
+ * is the correct behaviour on night one.
  */
-async function jobTriage(env, { cap, cursor, source }) {
+async function jobTriage(env, { cap, cursor, source, night, day }) {
+  const stats = night.stats;
+  const kinds = [];
+  const suppressed = [];
+  const probing = [];
+
+  for (const kind of TRIAGE_KINDS) {
+    // Deterministic roll, not Math.random(). A night has to be explainable
+    // afterwards — "why did it ask me about tags again on Tuesday" wants an
+    // answer, and a run that can't be reproduced can't be tested either. The
+    // day is in the hash, so the probe still comes round about one night in
+    // ten per generator; it just comes round on a night we can name.
+    const verdict = shouldSuppress(stats, kind, { roll: probeRoll(day, kind) });
+    if (verdict.suppress) { suppressed.push(`${kind}: ${verdict.reason}`); continue; }
+    if (verdict.probe) probing.push(`${kind}: ${verdict.reason}`);
+    kinds.push(kind);
+  }
+
+  if (!kinds.length) {
+    // Not an error and not an empty archive: he has answered these questions
+    // enough times that asking again is the wrong move. Said out loud so a
+    // silent queue has a reason sitting in the record.
+    return { skipped: true, reason: `every generator is suppressed — ${suppressed.join(" · ")}`, cursor };
+  }
+
   const out = await runProposalPass(env, {
-    kinds: ["dead-link", "realm"],
+    kinds,
     limit: cap,
     cursor: cursor || undefined,
     source,
@@ -400,12 +556,209 @@ async function jobTriage(env, { cap, cursor, source }) {
       alreadyPending: out.skipped,
       alreadyAnswered: out.answered,
       unreadable: out.unreadable,
+      // Loop 2's verdicts, kept whether or not they changed anything — "nothing
+      // was suppressed" is a finding, and an empty field would read as "the
+      // learner never ran".
+      ran: kinds,
+      suppressed,
+      probing,
     },
     errors: out.errors || [],
     line:
       `triage: read ${out.scanned} refs, checked ${out.checked} links, ` +
-      `staged ${out.totalQueued} proposals (${queued["dead-link"] || 0} dead, ${queued.realm || 0} realm)`,
+      `staged ${out.totalQueued} proposals (${queued["dead-link"] || 0} dead, ${queued.realm || 0} realm)` +
+      (suppressed.length ? `, ${suppressed.length} generator${suppressed.length > 1 ? "s" : ""} suppressed` : ""),
   };
+}
+
+// ---------------------------------------------------------------- job: ladder
+
+/**
+ * LOOP 1. Every ref climbs exactly one rung.
+ *
+ * Two sources, in this order:
+ *
+ *   1. What loop 3 asked for. The audit knows which region of the archive is
+ *      thin, which stored vectors no longer describe their refs, and which links
+ *      haven't been touched in a year — that is a far better answer to "what
+ *      should tonight work on" than "whatever the cursor is pointing at".
+ *   2. The ladder's own cohort, breadth-first, to fill whatever is left. A plan
+ *      that named eight refs must not leave seventeen slots idle.
+ *
+ * One rung per ref, never more. The nightly's job is breadth, and a ref that
+ * climbs three rungs in a night is three rungs the rest of the archive didn't
+ * get.
+ *
+ * The governor is honoured twice: `climb()` charges before every attempt, and a
+ * refusal that is about MONEY stops the job (there is nothing cheaper below it),
+ * while a refusal that is about the VISION RATION does not — a spent ration
+ * still leaves every tier-0 rung on the table, and stopping the night over it
+ * would throw away free work.
+ */
+async function jobLadder(env, { cap, cursor, retry, night }) {
+  const errors = [];
+  const seen = new Set();
+  const directed = [];
+  const reindexIds = [];
+  const unhandled = [];
+
+  for (const job of night.work || []) {
+    if (!job || !Array.isArray(job.refIds)) continue;
+    if (job.action === "reindex") { reindexIds.push(...job.refIds); continue; }
+    if (CLIMB_ACTIONS.has(job.action)) {
+      // `recheck` is loop 3 saying "we looked at this a year ago" — the rung is
+      // satisfied, so only a retry re-opens it.
+      for (const id of job.refIds) directed.push({ id, retry: retry || job.action === "recheck" });
+      continue;
+    }
+    // `stage` is the one action this file cannot execute: selfgaps knows a pair
+    // of refs is a near-duplicate but not what to PROPOSE about them, and
+    // stage.js drops any proposal that doesn't change a title, realm or tag.
+    // Queueing an empty card would be worse than not queueing one — so it is
+    // reported as unhandled rather than silently counted as done.
+    unhandled.push({ action: job.action, refs: job.refIds.length, why: job.line || "" });
+  }
+
+  const climbed = [];
+  let advanced = 0;
+  let refused = 0;
+  let toppedOut = 0;
+  let stopped = false;
+  let reason = "";
+  let spent = 0;
+
+  // ---- 1. the directed work
+  for (const { id, retry: force } of directed) {
+    if (climbed.length >= cap) break;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    let ref;
+    try {
+      ref = await env.REFS_KV.get(`ref:${id}`, "json");
+    } catch (err) {
+      errors.push({ stage: "kv", refId: id, error: `couldn't read a ref loop 3 asked for: ${short(err)}` });
+      continue;
+    }
+    if (!ref) continue; // deleted since the audit read it
+
+    const res = await climb(env, ref, { retry: force });
+    errors.push(...(res.errors || []));
+    spent += res.spent || 0;
+    // Loop 3 named it, but the ladder may already have taken it as far as it
+    // goes. That is not an attempt and not a refusal.
+    if (!res.step) { toppedOut++; continue; }
+    const verdict = await accountFor(env, res);
+    if (verdict.stopped) { stopped = true; reason = verdict.reason; break; }
+    if (verdict.refused) { refused++; continue; }
+    climbed.push(res);
+    if (res.ok && res.to > res.from) advanced++;
+  }
+
+  // ---- 2. top up, breadth-first
+  let walk = { cursor, done: false, scanned: 0, levels: {}, plan: null };
+  if (!stopped && climbed.length < cap) {
+    const cohort = await selectCohort(env, { limit: cap - climbed.length, cursor: cursor || undefined, retry });
+    if (cohort.error) {
+      errors.push({ stage: "kv", error: cohort.error });
+    } else {
+      walk = cohort;
+      for (const { ref } of cohort.items) {
+        if (climbed.length >= cap) break;
+        if (seen.has(ref.id)) continue;
+        seen.add(ref.id);
+        const res = await climb(env, ref, { retry });
+        errors.push(...(res.errors || []));
+        spent += res.spent || 0;
+        if (!res.step) { toppedOut++; continue; }
+        const verdict = await accountFor(env, res);
+        if (verdict.stopped) { stopped = true; reason = verdict.reason; break; }
+        if (verdict.refused) { refused++; continue; }
+        climbed.push(res);
+        if (res.ok && res.to > res.from) advanced++;
+      }
+    }
+  }
+
+  // ---- 3. the reindexes loop 3 asked for, if there is still room to pay
+  let reindexed = 0;
+  if (!stopped && brainReady(env)) {
+    for (const id of [...new Set(reindexIds)].slice(0, cap)) {
+      const booked = await charge(env, { tier: 2, units: 1, label: "nightly-reindex" });
+      if (!booked.ok) { stopped = true; reason = booked.reason; break; }
+      spent += booked.cost || 0;
+      let ref;
+      try {
+        ref = await env.REFS_KV.get(`ref:${id}`, "json");
+      } catch (err) {
+        errors.push({ stage: "kv", refId: id, error: short(err) });
+        continue;
+      }
+      if (!ref) continue;
+      if (await indexRef(env, ref)) reindexed++;
+      else errors.push({ stage: "embed", refId: id, error: "indexRef returned false — the embed or the upsert failed" });
+    }
+  }
+
+  for (const u of unhandled) {
+    errors.push({ stage: "ladder", error: `loop 3 wanted "${u.action}" on ${u.refs} refs and nothing here can do that yet: ${u.why}` });
+  }
+
+  const byRung = {};
+  for (const res of climbed) {
+    const name = res.step?.name || "unknown";
+    byRung[name] = (byRung[name] || 0) + 1;
+  }
+
+  return {
+    scanned: walk.scanned || 0,
+    cursor: stopped ? cursor : walk.cursor ?? cursor ?? null,
+    done: stopped ? false : Boolean(walk.done),
+    stopped,
+    reason,
+    detail: {
+      // Named by the audit vs found by the ladder's own walk. Kept apart in the
+      // record because "the night worked on what loop 3 asked for" is the claim
+      // this whole arrangement makes, and a single total can't back it up.
+      directed: directed.length,
+      fromCohort: Math.max(0, climbed.length - directed.length),
+      attempted: climbed.length,
+      advanced,
+      refused,
+      toppedOut,
+      reindexed,
+      unhandled,
+      byRung,
+      levels: walk.levels || {},
+      spent: Number(spent.toFixed(6)),
+      names: LEVEL_NAMES,
+    },
+    errors,
+    line:
+      `ladder: ${advanced} of ${climbed.length} refs climbed a rung` +
+      (directed.length ? ` (${directed.length} named by tonight's audit)` : "") +
+      (reindexed ? `, ${reindexed} re-embedded` : "") +
+      (refused ? `, ${refused} out of ration` : ""),
+  };
+}
+
+/**
+ * Read a refused climb correctly.
+ *
+ * `climb()` returns `{ok:false, spent:0}` for three different situations and
+ * they are not interchangeable: the money ran out (stop the night, everything
+ * below is more expensive), the vision ration ran out (keep going, tier-0 rungs
+ * are still free), or the ref simply had nothing to climb. Guessing from the
+ * reason string would break the first time a message was reworded, so this asks
+ * the governor directly — one read, and only when a climb came back empty.
+ */
+async function accountFor(env, res) {
+  if (res.ok || res.spent || !res.step) return { stopped: false, refused: false, reason: "" };
+  const q = await quote(env, { tier: 2, units: 1 });
+  if (!q.fits) return { stopped: true, refused: false, reason: res.reason || "the governor refused" };
+  // Not out of money. Either the ration is gone or the attempt itself failed;
+  // either way there is cheaper work left, so the job carries on.
+  return { stopped: false, refused: !res.to || res.to === res.from, reason: res.reason || "" };
 }
 
 // ----------------------------------------------------------------- job: embed
@@ -664,7 +1017,60 @@ async function jobVision(env, { cap, cursor, retry }) {
   };
 }
 
-const RUNNERS = { triage: jobTriage, embed: jobEmbed, enrich: jobEnrich, vision: jobVision };
+// ------------------------------------------------------------------- job: map
+
+/**
+ * Rebuild the phone map.
+ *
+ * Free — no model call anywhere in it — but the heaviest walk in this file: up
+ * to 5,000 KV reads and 120 vector queries. That is why it runs last. It writes
+ * the index key only after every level below it has landed, and prunes what the
+ * previous build wrote and this one didn't, so a build that dies partway leaves
+ * last night's map intact and readable rather than a half-map.
+ *
+ * With no Vectorize it still builds, grouping by kind and tag instead, and says
+ * so — the page renders "grouped by kind — no vector index" rather than an empty
+ * screen. He works from his phone; a stale map beats no map.
+ */
+async function jobMap(env) {
+  const out = await buildMapTree(env);
+  if (!out.ok) {
+    return { skipped: true, reason: out.error, errors: (out.errors || []).map(asError), cursor: null };
+  }
+  return {
+    scanned: out.scanned || 0,
+    cursor: null,
+    // One pass rebuilds the whole tree; there is nothing to resume.
+    done: true,
+    detail: {
+      refs: out.refs,
+      regions: (out.regions || []).length,
+      keys: out.keys,
+      pruned: out.pruned,
+      truncated: Boolean(out.truncated),
+      clustering: out.clustering || null,
+      builtAt: out.builtAt,
+    },
+    errors: (out.errors || []).map(asError),
+    line:
+      `map: ${(out.regions || []).length} regions over ${out.refs} refs` +
+      `${out.clustering?.vectors ? `, ${out.clustering.byVector} clusters by vector` : ", grouped by kind (no vector index)"}` +
+      `${out.pruned ? `, ${out.pruned} stale keys pruned` : ""}`,
+  };
+}
+
+/** Job errors are `{stage, error}`; some modules hand back other shapes. */
+const asError = (e) => (e && typeof e === "object" ? e : { error: String(e) });
+
+const RUNNERS = {
+  gaps: jobGaps,
+  triage: jobTriage,
+  ladder: jobLadder,
+  embed: jobEmbed,
+  enrich: jobEnrich,
+  vision: jobVision,
+  map: jobMap,
+};
 
 // -------------------------------------------------------------------- the run
 
@@ -749,6 +1155,32 @@ export async function runNightly(env, ctx, { now = new Date(), dryRun = false, j
   record.plan = plan;
   record.status = "running";
   record.finishedAt = null;
+
+  /**
+   * What the loops hand each other within one night.
+   *
+   * `work` is loop 3's list, written by the gaps job and read by the ladder. It
+   * is kept on the record so a resumed run — where the gaps job is already
+   * finished and skips itself — still climbs the refs tonight's audit named,
+   * instead of quietly falling back to the cursor.
+   *
+   * `stats` is loop 2's acceptance signal, read ONCE for the whole night. A
+   * per-generator read would be the same KV get four times, and a rollup that
+   * changed mid-run would suppress a kind the record said was allowed.
+   */
+  const night = { work: Array.isArray(record.work) ? record.work : [], stats: null };
+
+  night.stats = await acceptance(env);
+  record.learn = {
+    ok: night.stats.ok,
+    source: night.stats.source || "",
+    // A learner that couldn't read its rollup suppresses nothing — but "we asked
+    // and it broke" must never be recorded as "he has approved everything".
+    error: night.stats.error || null,
+    decided: night.stats.totals?.n ?? null,
+    enough: Boolean(night.stats.enough),
+  };
+  if (night.stats.error) record.errors.push({ job: "learn", error: night.stats.error });
   // The record belongs to the NIGHT, not to one invocation of it: `did` and
   // `skipped` accumulate across a resumed run, so the cost has to as well or
   // the brief would show four jobs' work beside the last retry's bill.
@@ -797,6 +1229,8 @@ export async function runNightly(env, ctx, { now = new Date(), dryRun = false, j
         cursor: cursors[job] ?? null,
         retry,
         source: "nightly",
+        night,
+        day,
       });
     } catch (err) {
       // One broken job must not take the night with it — the cheaper jobs have
@@ -826,6 +1260,10 @@ export async function runNightly(env, ctx, { now = new Date(), dryRun = false, j
       // A finished walk resets, so tomorrow starts at the newest refs again.
       cursors[job] = out.done ? null : out.cursor ?? null;
     }
+
+    // Tonight's work list belongs to the night, not to this invocation — a
+    // resumed run must climb what the audit named rather than starting over.
+    record.work = night.work;
 
     // Checkpoint after every job: a crash from here on cannot undo what this
     // job paid for, and the cursor is already saved.

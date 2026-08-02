@@ -15,6 +15,8 @@
  * Nothing in here can mutate a ref or reach Notion. That's the point.
  */
 
+import { recordOutcome } from "./learn.js";
+
 const PREFIX = "stage:";
 const TS_MAX = 10_000_000_000_000;
 
@@ -139,13 +141,20 @@ export async function decide(env, id, { action, edits = {} } = {}) {
   const item = await env.REFS_KV.get(key, "json");
   if (!item) return { ok: false, error: "Not found" };
 
+  // Loop 2: every swipe is signal. HERE, before the edits below are applied —
+  // they overwrite `item.proposal.realm` with `edits.realm`, and once that has
+  // happened the fact that he changed INSPO to KNOWLEDGE is unrecoverable.
+  // recordOutcome never throws; it reports, and we carry that out so a broken
+  // learner is visible rather than a silent no-op.
+  const learned = await recordOutcome(env, item, { action, edits });
+
   // Undo: put it back in the feed exactly as it was.
   if (action === "reopen") {
     item.status = "pending";
     delete item.decidedAt;
     item.applied = false;
     await env.REFS_KV.put(key, JSON.stringify(item));
-    return { ok: true, item };
+    return { ok: true, item, learned };
   }
 
   if (action === "approve" && edits && typeof edits === "object") {
@@ -159,7 +168,7 @@ export async function decide(env, id, { action, edits = {} } = {}) {
   item.decidedAt = new Date().toISOString();
   item.applied = false;
   await env.REFS_KV.put(key, JSON.stringify(item));
-  return { ok: true, item };
+  return { ok: true, item, learned };
 }
 
 /** Queue counts, for the morning brief and the UI header. */

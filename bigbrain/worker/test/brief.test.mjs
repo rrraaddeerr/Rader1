@@ -15,7 +15,7 @@ import {
 } from "../src/brief.js";
 import { BRIEF_HTML } from "../src/pages/brief.js";
 import * as queue from "../src/stage.js";
-import { ledger } from "../src/budget.js";
+import { ledger, dayStamp } from "../src/budget.js";
 
 let pass = 0, fail = 0;
 function ok(label, cond) { cond ? pass++ : (fail++, console.error("✗ " + label)); }
@@ -207,7 +207,12 @@ ok("and the reason is surfaced", noAI.errors.some((e) => e.stage === "vectors"))
 const brokeKV = makeKV();
 await seedRefs(brokeKV, [{ title: "Something new", hoursAgo: 1 }]);
 // Park the ledger at the ceiling so the governor has to say no.
-await brokeKV.put("budget:2026-07-29", JSON.stringify({ day: "2026-07-29", usd: 5, calls: {}, vision: 0 }));
+// The key is dayStamp() and not NOW's day on purpose: buildBrief takes an
+// injected clock, charge() does not — it always books against the real UTC day.
+// They agree in production (both are "now"); parking only the frozen day made
+// this assertion pass on 2026-07-29 and quietly stop testing anything after it.
+const brokeDay = dayStamp();
+await brokeKV.put(`budget:${brokeDay}`, JSON.stringify({ day: brokeDay, usd: 5, calls: {}, vision: 0 }));
 const refused = await buildBrief({ REFS_KV: brokeKV, AI }, { now: NOW, deep: true });
 eq("a refused charge still builds the brief", refused.ok, true);
 eq("no paragraph was written", refused.synthesis.text, null);

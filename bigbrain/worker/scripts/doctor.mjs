@@ -99,7 +99,7 @@ if (envAccount && loginAccount && envAccount !== loginAccount) {
 const hasVectorizeScope = scopes.length ? scopes.some((s) => s.startsWith("vectorize")) : null;
 
 // ------------------------------------------------------------ 4. the indexes
-const WANT = ["bigbrain-refs", "bigbrain-inventory"];
+const WANT = ["bigbrain-refs"];
 let existing = [];
 let vectorizeWorks = false;
 try {

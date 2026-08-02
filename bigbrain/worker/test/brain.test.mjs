@@ -8,7 +8,7 @@ import {
   captionTrackUrl,
   parseTranscriptXml,
 } from "../src/enrich.js";
-import { embedTextFor, embedTextForItem, brainReady, inventoryReady } from "../src/embed.js";
+import { embedTextFor, brainReady } from "../src/embed.js";
 import { buildContext, sourceOf, parseJsonish, callCheap, CHEAP_MODELS } from "../src/ask.js";
 
 let pass = 0, fail = 0;
@@ -95,27 +95,10 @@ ok("body is included", et.includes("long page text"));
 eq("empty ref -> empty", embedTextFor(null), "");
 eq("blank ref -> empty", embedTextFor({}), "");
 
-const item = {
-  id: "vpc-1",
-  title: "Bedside Table",
-  category: "Cases & Carts",
-  description: "Stainless top with gauges",
-  tags: ["Antique"],
-  era: "Contemporary",
-  condition: "Vintage",
-};
-const it = embedTextForItem(item);
-ok("item title leads", it.startsWith("Bedside Table"));
-ok("item description included", it.includes("Stainless top"));
-ok("item condition included", it.includes("Vintage"));
-eq("empty item -> empty", embedTextForItem(null), "");
-
 // ---- readiness flags ----
 eq("brain off without bindings", brainReady({}), false);
 eq("brain off with only AI", brainReady({ AI: {} }), false);
 eq("brain on with both", brainReady({ AI: {}, VECTORS: {} }), true);
-eq("inventory off without index", inventoryReady({ AI: {} }), false);
-eq("inventory on with index", inventoryReady({ AI: {}, INV_VECTORS: {} }), true);
 
 // ---- context building ----
 const refs = [

@@ -18,6 +18,7 @@
  *   GET    /blob/:key   -> raw bytes for an upload (public; key is unguessable)
  *   GET    /shortcuts   -> iOS Shortcuts setup guide
  *   GET    /brief       -> the morning brief page
+ *   GET    /map         -> the phone map: regions -> clusters -> refs
  *
  * Free maintenance (Tier 0 — no model, no index write; works with no bindings)
  *   POST   /api/thumbs           -> backfill missing og:image thumbnails
@@ -28,18 +29,30 @@
  *   POST   /api/search      -> semantic search over your refs
  *   POST   /api/ask         -> answer a question from your refs, with sources
  *   GET    /api/similar/:id -> refs nearest to this one
- *   GET    /api/profile     -> your taste fingerprint (future-outfit reads this)
- *   POST   /api/match       -> "do I have anything like this?" vs rent.co inventory
- *   POST   /api/set-draft   -> draft a client Set from a brief
- *   GET    /api/gaps        -> what he keeps saving that he can't rent out
+ *   GET    /api/profile     -> your taste fingerprint
  *   POST   /api/reindex     -> (re)build embeddings for everything already saved
- *   POST   /api/inventory/index -> load rent.co inventory into the item index
  *
  * The nightly (src/cron.js, also on a [triggers] cron in wrangler.toml)
  *   GET    /api/brief        -> what landed, what's waiting, what it cost
  *   POST   /api/nightly/run  -> run the maintenance pass now
  *   GET    /api/nightly      -> the last few nights
  *   GET    /api/nightly/:day -> one night's record (YYYY-MM-DD)
+ *
+ * The three learning loops — each has its own file; these are the read surfaces
+ *   GET    /api/ladder/stats     -> loop 1: level histogram, blocks, what's next
+ *   GET    /api/ladder/next/:id  -> loop 1: why is this one ref stuck?
+ *   POST   /api/ladder/run       -> loop 1: advance a cohort by one rung each
+ *   GET    /api/learn            -> loop 2: acceptance rates, ?rebuild=1 replays
+ *   POST   /api/learn/score      -> loop 2: what learning would do to a proposal
+ *   GET    /api/selfgaps         -> loop 3: the audit, free unless ?probe=1
+ *   GET·POST /api/selfgaps/plan  -> loop 3: tonight's work list (POST pays)
+ *   GET    /api/map              -> the map, one level at a time (one KV read)
+ *   POST   /api/map/rebuild      -> recompute the whole tree
+ *
+ * Tier 1 — his Mac, over Ollama (bigbrain/local/runner.mjs)
+ *   POST   /api/local/lease   -> hand out captioning/summarising work
+ *   POST   /api/local/submit  -> take the answers, failures and hand-backs back
+ *   GET    /api/local         -> what's left in the pool, and what's leased
  *
  * Storage (bound KV namespace REFS_KV)
  *   ref:<id>     -> ref object JSON. id = reverse-timestamp + rand, so a plain
@@ -49,7 +62,7 @@
  *
  * Auth: every write/read API requires header `X-Auth-Token: <AUTH_TOKEN>`.
  * Blobs are served unauthenticated at /blob/<key> so <img> tags work; the
- * random key is the capability (same model as rentco-sets slugs).
+ * random key is the capability.
  */
 
 import { categorize, ALL_CATEGORIES, parseUrl } from "./categorize.js";
@@ -62,23 +75,25 @@ import {
   searchRefs,
   searchRefsByVector,
   getRefVector,
-  indexInventory,
-  inventoryReady,
 } from "./embed.js";
 import { askBrain, hydrate, sourceOf, vibeProfile } from "./ask.js";
-import { matchArchive, draftSet } from "./rentco.js";
 import { classify, titleFor, summarize, REALMS } from "./realm.js";
 import * as queue from "./stage.js";
 import { quote, ledger } from "./budget.js";
 import { runProposalPass } from "./propose.js";
-import { findGaps } from "./gaps.js";
 import { buildBrief } from "./brief.js";
 import { runNightly, readRun, recentRuns } from "./cron.js";
+import { ladderStats, nextStep, levelOf, selectCohort, climb, LEVEL_NAMES } from "./ladder.js";
+import { acceptance, scoreProposal } from "./learn.js";
+import { findGaps, planTonight } from "./selfgaps.js";
+import { mapTree, buildMapTree, mapStatus } from "./mapdata.js";
+import { leaseJobs, submitResults, localStatus } from "./local.js";
 import { DROP_HTML } from "./pages/drop.js";
 import { BROWSE_HTML } from "./pages/browse.js";
 import { SHORTCUTS_HTML } from "./pages/shortcuts.js";
 import { QUEUE_HTML } from "./pages/queue.js";
 import { BRIEF_HTML } from "./pages/brief.js";
+import { MAP_HTML } from "./pages/map.js";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -200,13 +215,18 @@ export default {
       if (path === "/shortcuts" && request.method === "GET") return html(SHORTCUTS_HTML);
       if (path === "/queue" && request.method === "GET") return html(QUEUE_HTML);
       if (path === "/brief" && request.method === "GET") return html(BRIEF_HTML);
+      if (path === "/map" && request.method === "GET") return html(MAP_HTML);
       if (path === "/health") {
+        // No token on this route, so it says whether a subsystem is WIRED and
+        // never how much is in it. `built` is a yes/no about the map; the ref
+        // count that mapStatus also carries stays behind /api/map.
+        const map = await mapStatus(env);
         return json({
           ok: true,
           categories: ALL_CATEGORIES,
           brain: brainReady(env),
-          inventory: inventoryReady(env),
           deep: Boolean(env.ANTHROPIC_API_KEY),
+          map: { built: Boolean(map.built), builtAt: map.builtAt || null, error: map.error || null },
         });
       }
 
@@ -528,6 +548,215 @@ export default {
         return run ? json({ ok: true, run }) : json({ ok: false, error: "No run recorded" }, 404);
       }
 
+      // ---- loop 1: the enrichment ladder ---------------------------------
+      // A ref is never finished; it climbs. See src/ladder.js.
+
+      // GET /api/ladder/stats — the level histogram. Free, and the one number
+      // that says whether the nightly is working: a histogram that hasn't moved
+      // in a week is a broken cron, not a finished archive.
+      if (path === "/api/ladder/stats" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await ladderStats(env, {
+          cursor: url.searchParams.get("cursor") || undefined,
+          maxScan: clamp(url.searchParams.get("maxScan"), 1000, 5000),
+        });
+        return json({ ok: !out.error, names: LEVEL_NAMES, ...out }, out.error ? 500 : 200);
+      }
+
+      // POST /api/ladder/run — advance a cohort by one rung each. Breadth
+      // before depth: the cohort is sorted by the level of the STEP, so the
+      // whole archive reaches level 2 before anything reaches level 4.
+      if (path === "/api/ladder/run" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        // tier 0 is a legitimate value, so it can't go through clamp()'s
+        // "0 means unset" rule — same as /api/budget.
+        const t = parseInt(body.tier ?? url.searchParams.get("tier") ?? "2", 10);
+        const tier = Number.isFinite(t) && t >= 0 && t <= 3 ? t : 2;
+        const cohort = await selectCohort(env, {
+          limit: clamp(body.limit ?? url.searchParams.get("limit"), 25, 200),
+          cursor: body.cursor || url.searchParams.get("cursor") || undefined,
+          budget: body.budget,
+          retry: truthy(body.retry ?? url.searchParams.get("retry")),
+          tier,
+        });
+        // A KV list that threw and an archive with nothing left to climb are
+        // the same empty array otherwise — one is "goodnight", one is broken.
+        if (cohort.error) return json({ ok: false, error: cohort.error, ...cohort }, 500);
+        const results = [];
+        for (const { ref } of cohort.items) results.push(await climb(env, ref, { tier }));
+        return json({
+          ok: true,
+          climbed: results.filter((r) => r.ok && r.to > r.from).length,
+          attempted: results.length,
+          cursor: cohort.cursor,
+          done: cohort.done,
+          plan: cohort.plan,
+          levels: cohort.levels,
+          results,
+        });
+      }
+
+      // GET /api/ladder/next/:id — "why is this one ref stuck?". After the two
+      // exact paths above, the same way /api/queue/stats precedes /api/queue/:id.
+      if (path.startsWith("/api/ladder/next/") && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const id = decodeURIComponent(path.slice("/api/ladder/next/".length));
+        if (!id) return json({ ok: false, error: "Missing id" }, 400);
+        const ref = await env.REFS_KV.get(`ref:${id}`, "json");
+        if (!ref) return json({ ok: false, error: "Not found" }, 404);
+        const retry = truthy(url.searchParams.get("retry"));
+        const step = nextStep(ref, { retry });
+        return json({
+          ok: true,
+          id,
+          level: levelOf(ref),
+          name: LEVEL_NAMES[levelOf(ref)],
+          step,
+          // Null means topped out, which is a different fact from "blocked" —
+          // the ladder record says which rungs closed and why.
+          ladder: ref.ladder || null,
+        });
+      }
+
+      // ---- loop 2: what he actually accepts -------------------------------
+      // Every swipe is signal. See src/learn.js.
+
+      // GET /api/learn — acceptance per generator, source, axis and realm. One
+      // KV read; ?rebuild=1 replays the outcome log instead.
+      if (path === "/api/learn" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await acceptance(env, { rebuild: truthy(url.searchParams.get("rebuild")) });
+        return json(out, out.ok ? 200 : 503);
+      }
+
+      // POST /api/learn/score — what learning would do to one proposal, and
+      // why. A preview: it queues nothing and decides nothing.
+      if (path === "/api/learn/score" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const proposal = body.proposal || body;
+        if (!proposal || typeof proposal !== "object") {
+          return json({ ok: false, error: "Expected a proposal object" }, 400);
+        }
+        return json({ ok: true, scored: await scoreProposal(env, proposal) });
+      }
+
+      // ---- loop 3: the archive audits itself ------------------------------
+      // Self-directed, not a fixed script. See src/selfgaps.js.
+
+      // GET·POST /api/selfgaps/plan — tonight's work list. The GET is free and
+      // safe to refresh from a phone; the POST is the one that pays for probes.
+      if (path === "/api/selfgaps/plan" && (request.method === "GET" || request.method === "POST")) {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body =
+          request.method === "POST" ? (await request.json().catch(() => null)) || {} : {};
+        const out = await planTonight(env, {
+          cursor: body.cursor || url.searchParams.get("cursor") || undefined,
+          limit: clamp(body.limit ?? url.searchParams.get("limit"), 400, 2000),
+          budget: body.budget,
+          // A GET must never spend. The probes are the only paid part of the
+          // audit, so that is the whole difference between the two verbs.
+          probe: request.method === "POST" && truthy(body.probe ?? "1"),
+        });
+        // 200 even when degraded: with no Vectorize the stale and duplicate
+        // detectors still produce real jobs, and a 503 would throw them away.
+        return json({ ok: !out.error, ...out }, out.error ? 500 : 200);
+      }
+
+      // GET /api/selfgaps — the audit on its own. Free unless ?probe=1.
+      if (path === "/api/selfgaps" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await findGaps(env, {
+          cursor: url.searchParams.get("cursor") || undefined,
+          limit: clamp(url.searchParams.get("limit"), 400, 2000),
+          probe: truthy(url.searchParams.get("probe")),
+        });
+        return json({ ok: !out.error, ...out }, out.error ? 500 : 200);
+      }
+
+      // ---- the phone map --------------------------------------------------
+
+      // POST /api/map/rebuild — full scan plus vector queries. Not a pageview
+      // route; the page's ↻ button and the nightly are the callers. Awaited,
+      // not deferred: the response IS the build report and the page renders it.
+      if (path === "/api/map/rebuild" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await buildMapTree(env);
+        return json(out, out.ok ? 200 : 500);
+      }
+
+      // GET /api/map — one level of the tree. This is what the phone hits on
+      // every tap: one KV get, no scan, no clustering, no vector query.
+      if (path === "/api/map" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await mapTree(env, {
+          depth: url.searchParams.get("depth") || "",
+          region: url.searchParams.get("region") || "",
+          cluster: url.searchParams.get("cluster") || "",
+        });
+        // needsBuild is not a server error — it's an unbuilt map, and the page
+        // renders it as a "Build it now" card.
+        return json(out, out.ok || out.needsBuild ? 200 : 500);
+      }
+
+      // ---- tier 1: his Mac, over Ollama -----------------------------------
+      // Free compute on idle hardware. Leases, not claims — see src/local.js.
+
+      // POST /api/local/lease — hand out work. `limit: 0` is a ping.
+      if (path === "/api/local/lease" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await leaseJobs(env, {
+          runner: String(body.runner || "").slice(0, 60),
+          // limit 0 is legal and means "are you there?", so it can't go through
+          // clamp(), which reads 0 as unset.
+          limit: Number.isFinite(Number(body.limit)) ? Math.max(0, Number(body.limit)) : 8,
+          kinds: Array.isArray(body.kinds) ? body.kinds : undefined,
+          leaseSeconds: body.leaseSeconds,
+          // /blob/<key> is public, so the runner needs no token for the bytes.
+          origin: url.origin,
+          retry: truthy(body.retry),
+        });
+        return json(out, out.ok ? 200 : 503);
+      }
+
+      // POST /api/local/submit — answers, failures and hand-backs in one call.
+      // One call rather than three: a runner that submits its successes and
+      // then dies has stranded the rest for a whole lease period otherwise.
+      if (path === "/api/local/submit" && request.method === "POST") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const body = (await request.json().catch(() => null)) || {};
+        const out = await submitResults(env, {
+          runner: String(body.runner || "").slice(0, 60),
+          results: Array.isArray(body.results) ? body.results : [],
+          release: Array.isArray(body.release) ? body.release : [],
+        });
+        return json(out, out.ok ? 200 : 400);
+      }
+
+      // GET /api/local — what's still waiting for the Mac. Bounded, and it says
+      // so: `complete:false` means "at least this many", not "this many".
+      if (path === "/api/local" && request.method === "GET") {
+        const fail = requireToken(request, env);
+        if (fail) return fail;
+        const out = await localStatus(env, {
+          maxScan: clamp(url.searchParams.get("maxScan"), 600, 5000),
+        });
+        return json(out, out.ok ? 200 : 503);
+      }
+
       // ---- the brain ----------------------------------------------------
 
       // POST /api/search {q, limit, cat} — semantic search
@@ -608,69 +837,6 @@ export default {
         return json(out, out.ok === false ? 400 : 200);
       }
 
-      // POST /api/match — "do I have anything like this?" (JSON or raw image)
-      if (path === "/api/match" && request.method === "POST") {
-        const fail = requireToken(request, env);
-        if (fail) return fail;
-        const ct = request.headers.get("content-type") || "";
-        const topK = clamp(url.searchParams.get("limit"), 12, 60);
-        let out;
-        if (ct.includes("application/json")) {
-          const body = (await request.json().catch(() => null)) || {};
-          out = await matchArchive(env, { q: body.q, refId: body.refId }, { topK });
-        } else {
-          const bytes = await request.arrayBuffer();
-          out = await matchArchive(env, { bytes }, { topK });
-        }
-        return json(out, out.ok ? 200 : 400);
-      }
-
-      // POST /api/set-draft {brief} — draft a client Set from the archive
-      if (path === "/api/set-draft" && request.method === "POST") {
-        const fail = requireToken(request, env);
-        if (fail) return fail;
-        const body = (await request.json().catch(() => null)) || {};
-        const out = await draftSet(env, body.brief, { deep: truthy(body.deep ?? true) });
-        return json(out, out.ok ? 200 : 400);
-      }
-
-      // GET /api/gaps — what he keeps saving that he can't rent out.
-      // findGaps() never throws and reports its own missing bindings with a
-      // reason, so it does its own gating rather than sharing BRAIN_OFF: the
-      // useful message here names INV_VECTORS, not the refs index.
-      if (path === "/api/gaps" && request.method === "GET") {
-        const fail = requireToken(request, env);
-        if (fail) return fail;
-        const out = await findGaps(env, {
-          sample: clamp(url.searchParams.get("sample"), 60, 150),
-          topK: clamp(url.searchParams.get("topK"), 3, 20),
-          threshold: Number(url.searchParams.get("threshold")) || undefined,
-          sim: Number(url.searchParams.get("sim")) || undefined,
-          minSize: clamp(url.searchParams.get("minSize"), 1, 50),
-          cursor: url.searchParams.get("cursor") || undefined,
-          deep: truthy(url.searchParams.get("deep")),
-        });
-        return json(out, out.ok ? 200 : 503);
-      }
-
-      // POST /api/gaps {sample, threshold, topK, sim, minSize, cursor, deep}
-      // deep stays opt-in on both verbs — it's the only path that spends tier 3.
-      if (path === "/api/gaps" && request.method === "POST") {
-        const fail = requireToken(request, env);
-        if (fail) return fail;
-        const body = (await request.json().catch(() => null)) || {};
-        const out = await findGaps(env, {
-          sample: clamp(body.sample, 60, 150),
-          topK: clamp(body.topK, 3, 20),
-          threshold: Number(body.threshold) || undefined,
-          sim: Number(body.sim) || undefined,
-          minSize: clamp(body.minSize, 1, 50),
-          cursor: body.cursor || undefined,
-          deep: truthy(body.deep),
-        });
-        return json(out, out.ok ? 200 : 503);
-      }
-
       // POST /api/thumbs — put a thumbnail on every ref missing one.
       // Deliberately not /api/reindex?deep=1: an image is in neither the
       // embedding text nor the vector metadata, so this touches no model and no
@@ -692,20 +858,6 @@ export default {
         if (fail) return fail;
         if (!brainReady(env)) return json(BRAIN_OFF, 503);
         return await handleReindex(env, url);
-      }
-
-      // POST /api/inventory/index — load rent.co items into the item index
-      if (path === "/api/inventory/index" && request.method === "POST") {
-        const fail = requireToken(request, env);
-        if (fail) return fail;
-        if (!inventoryReady(env)) {
-          return json({ ok: false, error: "INV_VECTORS binding missing — see README." }, 503);
-        }
-        const body = await request.json().catch(() => null);
-        const items = Array.isArray(body) ? body : body?.items;
-        if (!Array.isArray(items)) return json({ ok: false, error: "Expected an array of items" }, 400);
-        const n = await indexInventory(env, items);
-        return json({ ok: true, indexed: n, received: items.length });
       }
 
       return json({ ok: false, error: "Not found", path }, 404);

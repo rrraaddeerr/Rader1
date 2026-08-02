@@ -7,11 +7,9 @@
  * A ref is searchable the moment it lands, and forgotten the moment it's
  * deleted — no retraining, ever.
  *
- * Two indexes:
- *   VECTORS      — your refs (what you saved)
- *   INV_VECTORS  — rent.co inventory (what you own)
- * Same embedding model, so a question, a saved ref and an archive item all
- * live in the same space and can be compared to each other.
+ * One index: VECTORS — your refs. A question and a saved ref go through the
+ * same embedding model, so they live in the same space and can be compared to
+ * each other.
  *
  * Every call degrades gracefully: with no AI/Vectorize bindings the worker
  * still saves, lists and serves exactly as before.
@@ -51,26 +49,6 @@ export function embedTextFor(ref) {
     .filter(Boolean)
     .join("\n")
     .slice(0, 8000);
-}
-
-/** Same idea for an inventory item from data/inventory.json. */
-export function embedTextForItem(item) {
-  if (!item || typeof item !== "object") return "";
-  const parts = [
-    item.title || item.name,
-    item.category,
-    item.subcategory || item.subcat,
-    item.description || item.desc,
-    Array.isArray(item.tags) && item.tags.length ? `Tags: ${item.tags.join(", ")}` : "",
-    item.material,
-    item.era,
-    item.condition,
-  ];
-  return parts
-    .map((p) => (typeof p === "string" ? p.trim() : ""))
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 4000);
 }
 
 /** True when this worker has everything it needs to do semantic work. */
@@ -195,76 +173,5 @@ export async function getRefVector(env, id) {
     return hit?.values || null;
   } catch {
     return null;
-  }
-}
-
-// ---------------------------------------------------------------- inventory
-
-/** True when the rent.co inventory index is wired up. */
-export const inventoryReady = (env) => Boolean(env?.AI && env?.INV_VECTORS);
-
-/**
- * Index a batch of inventory items. Called by scripts/index-inventory.mjs.
- * @returns {Promise<number>} how many landed
- */
-export async function indexInventory(env, items) {
-  if (!inventoryReady(env) || !Array.isArray(items) || !items.length) return 0;
-  const usable = items
-    .map((item) => ({ item, text: embedTextForItem(item) }))
-    .filter(({ item, text }) => text && (item.id || item.slug || item.barcode));
-  if (!usable.length) return 0;
-
-  const vectors = await embed(env, usable.map((u) => u.text));
-  if (!vectors || vectors.length !== usable.length) return 0;
-
-  try {
-    await env.INV_VECTORS.upsert(
-      usable.map(({ item }, i) => ({
-        id: String(item.id || item.slug || item.barcode),
-        values: vectors[i],
-        metadata: {
-          title: String(item.title || item.name || "").slice(0, META_TITLE_MAX),
-          category: item.category || "",
-          slug: item.slug || "",
-          image: String(item.image || item.photo || item.images?.[0] || "").slice(0, 400),
-        },
-      }))
-    );
-    return usable.length;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Nearest inventory items to a query string — "do I have anything like this?"
- *
- * Returns `{items, error}` rather than a bare array: an empty result and a
- * rejected query look identical otherwise, which makes a real failure
- * impossible to tell from "nothing matched".
- *
- * @returns {Promise<{items:Array, error:string|null}>}
- */
-export async function matchInventory(env, query, { topK = 12 } = {}) {
-  if (!inventoryReady(env)) return { items: [], error: "INV_VECTORS binding missing" };
-  const vector = await embedOne(env, query);
-  if (!vector) return { items: [], error: "embedding failed — no vector for the query" };
-
-  // Vectorize caps topK at 20 when full metadata is requested; asking for more
-  // is rejected outright rather than truncated.
-  const capped = Math.min(topK, METADATA_TOPK_MAX);
-  try {
-    const res = await env.INV_VECTORS.query(vector, { topK: capped, returnMetadata: "all" });
-    const matches = res?.matches || [];
-    return {
-      items: matches.map((m) => ({
-        id: m.id,
-        score: typeof m.score === "number" ? m.score : 0,
-        ...(m.metadata || {}),
-      })),
-      error: null,
-    };
-  } catch (err) {
-    return { items: [], error: `query rejected: ${String(err?.message ?? err).slice(0, 240)}` };
   }
 }
