@@ -172,18 +172,30 @@ export async function decide(env, id, { action, edits = {} } = {}) {
 }
 
 /** Queue counts, for the morning brief and the UI header. */
+/**
+ * Concurrent gets per batch. This scan reads every item in the queue one at a
+ * time — brief.js calls it "the expensive half" of building the morning page
+ * for exactly that reason. I/O wait costs no CPU time on a Worker, so a
+ * thousand sequential round trips never trips a resource limit, it just makes
+ * the caller wait. Same total reads, far less wall-clock time.
+ */
+const STATS_BATCH = 20;
+
 export async function stats(env) {
   const counts = { pending: 0, approved: 0, rejected: 0, skipped: 0, applied: 0 };
   let cursor;
   let scanned = 0;
   do {
     const page = await env.REFS_KV.list({ prefix: PREFIX, limit: 1000, cursor });
-    for (const k of page.keys) {
-      if (scanned++ > 10000) break;
-      const item = await env.REFS_KV.get(k.name, "json");
-      if (!item) continue;
-      if (counts[item.status] !== undefined) counts[item.status]++;
-      if (item.applied) counts.applied++;
+    for (let i = 0; i < page.keys.length && scanned <= 10000; i += STATS_BATCH) {
+      const chunk = page.keys.slice(i, i + STATS_BATCH);
+      const items = await Promise.all(chunk.map((k) => env.REFS_KV.get(k.name, "json").catch(() => null)));
+      for (const item of items) {
+        scanned++;
+        if (!item) continue;
+        if (counts[item.status] !== undefined) counts[item.status]++;
+        if (item.applied) counts.applied++;
+      }
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor && scanned <= 10000);

@@ -391,6 +391,26 @@ async function readCache(env, key, now) {
 }
 
 /**
+ * How many KV gets to have in flight at once while walking the archive.
+ *
+ * The first brief of the day used to fetch up to MAX_READ (400) refs one at a
+ * time, each a full round trip to KV. I/O wait doesn't cost CPU time on a
+ * Worker, so it never tripped a resource limit — it just sat there, and on a
+ * phone that reads as "the page doesn't work", not as an error, because
+ * nothing ever comes back to be wrong. Batching the gets is the fix: same
+ * number of reads, same stopping rules, a fraction of the wall-clock time.
+ *
+ * The tradeoff this buys: a stopping condition (the read cap, the window
+ * closing) is only checked between batches, not between every single ref, so
+ * a run can overshoot by up to a batch's worth of gets before it notices it
+ * should have stopped. `maxRead` itself is never exceeded — each batch is
+ * trimmed to what's left of the budget — only the softer "window-closed" stop
+ * can overshoot, and only by a few refs. That's a fine trade for a page whose
+ * own numbers already carry `exact`/`complete` flags for exactly this reason.
+ */
+const GET_BATCH = 20;
+
+/**
  * Walk the ref keys once: count all of them, read only the head.
  *
  * Key listing is cheap (one subrequest per page, no values), so `total` is
@@ -403,7 +423,7 @@ async function readCache(env, key, now) {
  *                    undated:number, recent:Array<{ref:object, at:number}>,
  *                    sample:Array<object>, stopReason:string, errors:Array}>}
  */
-async function walkArchive(env, { now, windowMs, maxRead, sampleMin }) {
+export async function walkArchive(env, { now, windowMs, maxRead, sampleMin }) {
   const errors = [];
   const recent = [];
   const sample = [];
@@ -432,37 +452,52 @@ async function walkArchive(env, { now, windowMs, maxRead, sampleMin }) {
     }
     total += page.keys.length;
 
-    for (const k of page.keys) {
+    for (let i = 0; i < page.keys.length; ) {
       if (!reading) break;
       if (read >= maxRead) { reading = false; stopReason = "read-cap"; break; }
       // Past the window and the shape sample is full — nothing left to learn
-      // from reading further, and every further get is a subrequest.
+      // from reading further, and every further get is a subrequest. Checked
+      // once per batch rather than once per ref — see GET_BATCH above.
       if (stale >= PATIENCE && sample.length >= sampleMin) { reading = false; stopReason = "window-closed"; break; }
 
-      let ref = null;
-      try {
-        ref = await env.REFS_KV.get(k.name, "json");
-      } catch (err) {
-        errors.push({ stage: "kv-get", key: k.name, error: short(err) });
-        continue;
-      }
-      read++;
-      // A listed key that reads back empty is a deleted or half-written ref.
-      // Not an error, but "400 read, 0 new" and "400 read, 400 unreadable" are
-      // different mornings, so it gets counted rather than dropped.
-      if (!ref?.id) { unreadable++; continue; }
-      sample.push(ref);
+      // Trimmed to what's left of the read budget, so maxRead is a hard cap
+      // even though the fetches inside a batch run concurrently.
+      const room = Math.min(GET_BATCH, maxRead - read, page.keys.length - i);
+      const chunk = page.keys.slice(i, i + room);
+      i += chunk.length;
 
-      const at = refCreatedAt(ref);
-      if (at == null) {
-        // Undated refs can't close the window — they carry no evidence about
-        // where we are in time, and letting a block of them count as "old"
-        // would hide genuinely new refs sitting behind them.
-        undated++;
-        continue;
+      const settled = await Promise.all(
+        chunk.map((k) =>
+          env.REFS_KV.get(k.name, "json").then(
+            (ref) => ({ key: k.name, ref, error: null }),
+            (error) => ({ key: k.name, ref: null, error })
+          )
+        )
+      );
+
+      for (const { key, ref, error } of settled) {
+        if (error) {
+          errors.push({ stage: "kv-get", key, error: short(error) });
+          continue;
+        }
+        read++;
+        // A listed key that reads back empty is a deleted or half-written ref.
+        // Not an error, but "400 read, 0 new" and "400 read, 400 unreadable"
+        // are different mornings, so it gets counted rather than dropped.
+        if (!ref?.id) { unreadable++; continue; }
+        sample.push(ref);
+
+        const at = refCreatedAt(ref);
+        if (at == null) {
+          // Undated refs can't close the window — they carry no evidence about
+          // where we are in time, and letting a block of them count as "old"
+          // would hide genuinely new refs sitting behind them.
+          undated++;
+          continue;
+        }
+        if (now - at <= windowMs) { recent.push({ ref, at }); stale = 0; }
+        else stale++;
       }
-      if (now - at <= windowMs) { recent.push({ ref, at }); stale = 0; }
-      else stale++;
     }
 
     cursor = page.list_complete ? undefined : page.cursor;
