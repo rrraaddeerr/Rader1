@@ -12,8 +12,9 @@
  *   clusters  neighbourhoods inside a region — vector nearest-neighbour groups
  *   refs      the things themselves
  *
- * The phone downloads nine region cards, then a dozen cluster cards, then one
- * cluster's refs. It never downloads 1,578 of anything, at any depth.
+ * The phone downloads nine region cards, then a dozen cluster cards, then ONE
+ * PAGE of a cluster's refs — 60, with a cursor for the next. It never downloads
+ * 1,578 of anything, at any depth, and never renders more than it can read.
  *
  * Two properties this file exists to hold:
  *
@@ -65,6 +66,21 @@ export const MIN_CLUSTER = 3;
 
 /** Cap the clusters screen too — same 6-inch constraint, one level down. */
 export const MAX_CLUSTERS_PER_REGION = 24;
+
+/**
+ * Refs handed to the phone in one response.
+ *
+ * A cluster is capped on the clusters SCREEN, not in the data: when the rules
+ * have to carry a region the tail bucket legitimately holds hundreds of refs
+ * (measured: 1,146). Sending those down as one array is the original complaint
+ * in a new place — a thousand tiles on a 6-inch screen — so the read path pages
+ * them and hands back a `nextCursor`. 60 is what the page draws at once: three
+ * 104px columns, about five screenfuls.
+ */
+export const REFS_PAGE = 60;
+
+/** Ceiling on an explicit `limit`. Nobody gets to ask for the whole cluster. */
+export const REFS_PAGE_MAX = 120;
 
 /** Bounded scan. A tree built from part of the archive must SAY it was partial. */
 export const MAX_SCAN = 5000;
@@ -641,11 +657,15 @@ function levelFor({ depth, region, cluster }) {
  * nothing else: no scan, no clustering, no vector query. If the tree hasn't
  * been built the answer is an explicit `needsBuild`, not an empty map.
  *
+ * The refs level is paged: `nodes` is never longer than `REFS_PAGE`, `total` is
+ * still the whole cluster, and `nextCursor` is the offset to ask for next (null
+ * when there is no next). Everything above refs is capped at build time.
+ *
  * @param {object} env
- * @param {{depth?:string|number, region?:string, cluster?:string}} opts
+ * @param {{depth?:string|number, region?:string, cluster?:string, cursor?:string|number, limit?:string|number}} opts
  * @returns {Promise<{ok:boolean, level:string, nodes:Array, path:Array, error:string|null}>}
  */
-export async function mapTree(env, { depth = "", region = "", cluster = "" } = {}) {
+export async function mapTree(env, { depth = "", region = "", cluster = "", cursor = "", limit = 0 } = {}) {
   const level = levelFor({ depth, region, cluster });
   const blank = { ok: false, level, nodes: [], path: [], total: 0, builtAt: null, error: null };
 
@@ -664,11 +684,22 @@ export async function mapTree(env, { depth = "", region = "", cluster = "" } = {
     const { value, error } = await read(clusterKey(cluster));
     if (error) return { ...blank, error };
     if (!value) return { ...blank, error: "that cluster isn't in the current map", needsBuild: true };
+    const refs = value.refs || [];
+    // One page, from wherever the phone left off. A bad cursor reads as 0
+    // rather than as an empty cluster — the two look identical on screen.
+    const size = Math.max(1, Math.min(Number.parseInt(limit, 10) || REFS_PAGE, REFS_PAGE_MAX));
+    const from = Math.max(0, Math.min(Number.parseInt(cursor, 10) || 0, refs.length));
+    const page = refs.slice(from, from + size);
+    const next = from + page.length;
     return {
       ok: true,
       level,
-      nodes: value.refs || [],
-      total: value.count ?? (value.refs || []).length,
+      nodes: page,
+      total: value.count ?? refs.length,
+      offset: from,
+      // A cursor, not a page number: the caller echoes it back and never has to
+      // know how big a page is.
+      nextCursor: next < refs.length ? String(next) : null,
       path: [
         crumb("regions", "", "Map"),
         crumb("clusters", value.regionId, value.regionLabel),

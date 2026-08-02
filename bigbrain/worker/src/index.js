@@ -46,7 +46,8 @@
  *   POST   /api/learn/score      -> loop 2: what learning would do to a proposal
  *   GET    /api/selfgaps         -> loop 3: the audit, free unless ?probe=1
  *   GET·POST /api/selfgaps/plan  -> loop 3: tonight's work list (POST pays)
- *   GET    /api/map              -> the map, one level at a time (one KV read)
+ *   GET    /api/map              -> the map, one level at a time (one KV read);
+ *                                  refs come back a page at a time (?cursor=)
  *   POST   /api/map/rebuild      -> recompute the whole tree
  *
  * Tier 1 — his Mac, over Ollama (bigbrain/local/runner.mjs)
@@ -721,6 +722,9 @@ export default {
           depth: url.searchParams.get("depth") || "",
           region: url.searchParams.get("region") || "",
           cluster: url.searchParams.get("cluster") || "",
+          // Refs come back a page at a time; the phone echoes back nextCursor.
+          cursor: url.searchParams.get("cursor") || "",
+          limit: url.searchParams.get("limit") || "",
         });
         // needsBuild is not a server error — it's an unbuilt map, and the page
         // renders it as a "Build it now" card.
