@@ -108,6 +108,37 @@ const run = async () => {
   // newest first: the image was saved last
   eq("newest first ordering", d.refs[0].id, imgId);
 
+  // Same-millisecond ordering. This used to pass or fail depending on how fast
+  // the machine was: three saves inside one tick shared a timestamp prefix and
+  // fell through to a random suffix, so "newest first" quietly stopped holding
+  // exactly when someone dropped several files at once. Saving in a tight loop
+  // forces the collision on any hardware.
+  {
+    const burst = [];
+    for (let i = 0; i < 12; i++) {
+      const res = await call("/save", {
+        method: "POST",
+        headers: { ...TOK, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `burst ${i}` }),
+      });
+      burst.push((await res.json()).ref.id);
+    }
+    ok("burst ids are all distinct", new Set(burst).size === burst.length);
+
+    const listed = await (await call("/api/list?limit=12", { headers: TOK })).json();
+    const got = listed.refs.map((x) => x.id).slice(0, burst.length);
+    eq(
+      "a burst of saves still lists newest first",
+      JSON.stringify(got),
+      JSON.stringify([...burst].reverse())
+    );
+
+    // Put the store back as it was — the assertions further down count refs.
+    for (const id of burst) {
+      await call("/api/ref/" + encodeURIComponent(id), { method: "DELETE", headers: TOK });
+    }
+  }
+
   // filter by category
   r = await call("/api/list?cat=code", { headers: TOK });
   d = await r.json();

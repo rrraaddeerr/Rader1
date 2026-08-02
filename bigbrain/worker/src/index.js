@@ -152,13 +152,31 @@ function requireToken(request, env) {
 
 // id whose lexical order is reverse-chronological (newest sorts first)
 const TS_MAX = 10_000_000_000_000; // ~ year 2286 in ms
+
+// Two saves inside the same millisecond used to share an identical timestamp
+// prefix, leaving their relative order to the random suffix — so "newest first"
+// silently stopped being true whenever the machine was quick enough to land two
+// writes in one tick. A drop of several files at once does exactly that.
+//
+// The counter runs DOWN (999, 998, …) because smaller sorts first, so a later
+// save within the same millisecond still comes out on top.
+let lastMs = 0;
+let sameMs = 0;
+
 function newId() {
-  const rev = (TS_MAX - Date.now()).toString().padStart(14, "0");
-  const rand = crypto.randomUUID().slice(0, 8);
-  return `${rev}-${rand}`;
+  const now = Date.now();
+  if (now === lastMs) sameMs++;
+  else { lastMs = now; sameMs = 0; }
+
+  const rev = (TS_MAX - now).toString().padStart(14, "0");
+  const sub = (999 - Math.min(sameMs, 999)).toString().padStart(3, "0");
+  return `${rev}${sub}-${crypto.randomUUID().slice(0, 8)}`;
 }
+
+// Reads the first 14 characters rather than splitting on "-", so ids written
+// before the sub-millisecond counter existed still resolve to the right time.
 const createdAtFromId = (id) => {
-  const rev = parseInt(id.split("-")[0], 10);
+  const rev = parseInt(String(id).slice(0, 14), 10);
   return Number.isFinite(rev) ? new Date(TS_MAX - rev).toISOString() : null;
 };
 
