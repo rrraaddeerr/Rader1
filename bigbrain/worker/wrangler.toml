@@ -1,0 +1,84 @@
+# Deploys to save-ref-v2.<your-subdomain>.workers.dev — a NEW worker, so it
+# runs side-by-side and never touches your existing save-ref-worker or its data.
+# When you're happy and want it to BE the main one, change this back to
+# "save-ref-worker" and redeploy (that replaces the old code; migrate old data
+# first via POST /api/import if you can export it).
+name = "save-ref-v2"
+main = "src/index.js"
+compatibility_date = "2025-05-01"
+
+# Pinned so a stray CLOUDFLARE_ACCOUNT_ID in a shell profile can't silently
+# aim deploys at the wrong account. Note the env var still WINS over this —
+# `npm run doctor` checks for that mismatch and tells you to unset it.
+account_id = "e87845f0432428cd66fc37867b2cc01e"
+
+# KV holds the refs (and uploaded blobs unless you add R2 below).
+# Create it once, then paste the printed id:
+#   npx wrangler kv namespace create save-ref-kv
+[[kv_namespaces]]
+binding = "REFS_KV"
+id = "e9c59ebc5134468bbb4b486a4261f2c2"
+
+# OPTIONAL — offload uploaded image/file bytes to R2 instead of KV (recommended
+# if you drop lots of large files; KV values are capped at 25 MB). Create with:
+#   npx wrangler r2 bucket create save-ref-blobs
+# then uncomment:
+# [[r2_buckets]]
+# binding = "REFS_R2"
+# bucket_name = "save-ref-blobs"
+
+# ---------------------------------------------------------------- the brain
+# Workers AI runs the embedding, vision-caption and fast-answer models inside
+# the Worker. No resource to create and no key — just the binding.
+[ai]
+binding = "AI"
+
+# Vectorize stores the embeddings. Create BOTH indexes once before deploying,
+# or `wrangler deploy` will fail saying the index doesn't exist:
+#   npx wrangler vectorize create bigbrain-refs      --dimensions=768 --metric=cosine
+#   npx wrangler vectorize create bigbrain-inventory --dimensions=768 --metric=cosine
+# (768 is the output size of @cf/baai/bge-base-en-v1.5 — see src/embed.js.)
+[[vectorize]]
+binding = "VECTORS"
+index_name = "bigbrain-refs"
+
+# rent.co inventory, so Big Brain can answer "do I have anything like this?".
+# Populate it with: node scripts/index-inventory.mjs  (from the repo root)
+[[vectorize]]
+binding = "INV_VECTORS"
+index_name = "bigbrain-inventory"
+
+# OPTIONAL — the "deep" tier. Without it, /api/ask?deep=1 quietly falls back to
+# the fast Workers AI model, so the worker is fine to run without one.
+#   npx wrangler secret put ANTHROPIC_API_KEY
+# Override the model (default claude-sonnet-5) with a plain var if you want:
+# [vars]
+# ANTHROPIC_MODEL = "claude-sonnet-5"
+
+# ---------------------------------------------------------------- the nightly
+# src/cron.js — bounded overnight maintenance (dead links, realm proposals,
+# missing embeddings, enrichment, rationed vision captions). Designed to cost
+# about two cents; the $5/night ceiling in src/budget.js is the backstop.
+#
+# Cron is ALWAYS UTC and never shifts for daylight saving, so the conversion is
+# fixed once and drifts by an hour twice a year on purpose:
+#
+#   11:10 UTC = 04:10 Vancouver in summer (PDT, UTC-7)
+#             = 03:10 Vancouver in winter (PST, UTC-8)
+#
+# Both land in the dead of the early morning, and the run record is written
+# hours before he opens the morning brief.
+#
+# Why not on the hour: :00 is the busiest minute on Cloudflare's scheduler and
+# a cron there can start several minutes late.
+#
+# Why 11:10 and not later: the Prospector sweep already runs nightly at 12:30
+# UTC. This finishes with well over an hour of clear water before it starts, so
+# the two never contend for subrequests or for the same budget ledger.
+[triggers]
+crons = ["10 11 * * *"]
+
+# AUTH_TOKEN is a secret, never committed. Set it with:
+#   openssl rand -hex 32           # copy the output -> this is your Big Brain token
+#   npx wrangler secret put AUTH_TOKEN
+# Paste the SAME value into the /drop page's first-time setup field.
