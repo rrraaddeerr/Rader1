@@ -33,7 +33,7 @@
  */
 
 import { charge } from "./budget.js";
-import { nextStep, recordAttempt, stepState, levelOf } from "./ladder.js";
+import { RUNGS, isBlocked, recordAttempt, stepState, levelOf } from "./ladder.js";
 import { brainReady, indexRef } from "./embed.js";
 
 /** Job kinds the Mac knows how to do. Anything else is refused at the door. */
@@ -86,19 +86,30 @@ export function parseJobId(jobId) {
 
 // ------------------------------------------------------------- the candidates
 
+const CAPTION_RUNG = RUNGS.find((r) => r.level === KIND_LEVEL.caption);
+
 /**
  * An image the Mac could caption.
  *
- * Deliberately asks the LADDER rather than re-deriving the rule: rung 3 already
- * encodes `applies` (it's an image), `satisfied` (no caption yet), `possible`
- * (there are bytes somewhere to fetch) and — the part that matters — `isBlocked`,
- * so a ref whose caption attempt permanently failed is not handed to the Mac
- * every night forever. `maxTier: 2` because rung 3 is a tier-2 rung when Workers
- * AI does it; here the same rung costs nothing, which is the whole point.
+ * Asks the LADDER's own rung rather than re-deriving the rule — `applies` (it
+ * is an image), `satisfied` (no caption yet), `possible` (there are bytes
+ * somewhere to fetch), and `isBlocked`, so a ref whose caption permanently
+ * failed is not handed to the Mac every night for the rest of the archive's
+ * life.
+ *
+ * What it deliberately does NOT use is `nextStep()`. That returns the CHEAPEST
+ * available rung, and an image the classifier hasn't seen yet reports rung 1 —
+ * free, deterministic, and something the Mac cannot do. Gating local captions on
+ * it would serialise every image in the archive behind a tier-0 rung the nightly
+ * only advances twenty-five refs a night: sixty-three nights before the Mac may
+ * caption anything. The rungs are independent; only the LEVEL is ordered.
  */
 export function captionable(ref, { now = new Date(), retry = false } = {}) {
-  const step = nextStep(ref, { now, retry, maxTier: 2 });
-  return step?.level === KIND_LEVEL.caption;
+  if (!ref || typeof ref !== "object") return false;
+  if (!CAPTION_RUNG.applies(ref)) return false;
+  if (CAPTION_RUNG.satisfied(ref)) return false;
+  if (!CAPTION_RUNG.possible(ref)) return false;
+  return !isBlocked(ref, CAPTION_RUNG.level, { now, retry });
 }
 
 /**

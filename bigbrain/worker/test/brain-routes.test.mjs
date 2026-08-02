@@ -198,6 +198,139 @@ const run = async () => {
   eq("profile ok", d.ok, true);
   ok("profile reports its sample size", d.basedOn > 0);
 
+  // ---- the three loops, the map and the Mac, through the router ------------
+  // Each of these is unit-tested in its own file; what is checked here is that
+  // the route exists, is guarded, and hands back the shape the caller expects.
+
+  // Loop 1 — the ladder.
+  r = await call("/api/ladder/stats", { headers: TOK });
+  d = await r.json();
+  eq("ladder stats ok", d.ok, true);
+  ok("it names the levels", Array.isArray(d.names) && d.names[0] === "raw");
+  ok("and counts them", d.levels && typeof d.levels === "object");
+
+  r = await call("/api/ladder/next/" + cartId, { headers: TOK });
+  d = await r.json();
+  eq("one ref's next step ok", d.ok, true);
+  ok("it says how deep the ref is", typeof d.level === "number");
+  // Null is "topped out", which is a different fact from "blocked" — both are
+  // legal answers here and the ladder record says which.
+  ok("and what would happen next", d.step === null || typeof d.step.level === "number");
+
+  r = await call("/api/ladder/next/nope", { headers: TOK });
+  eq("a missing ref -> 404", r.status, 404);
+
+  r = await call("/api/ladder/run", { method: "POST", headers: JSONH, body: JSON.stringify({ limit: 3 }) });
+  d = await r.json();
+  eq("a ladder run ok", d.ok, true);
+  ok("it reports what it attempted", typeof d.attempted === "number");
+  ok("and what the governor allowed", d.plan && typeof d.plan.allowed === "number");
+
+  // Loop 2 — what he accepts.
+  r = await call("/api/learn", { headers: TOK });
+  d = await r.json();
+  eq("learn ok", d.ok, true);
+  // Nothing decided yet: the rate must be null, never 0. Those are different
+  // facts and collapsing them is how a dashboard starts lying.
+  eq("with nothing swiped the rate is unknown, not zero", d.totals.rate, null);
+
+  r = await call("/api/learn/score", {
+    method: "POST", headers: JSONH,
+    body: JSON.stringify({ proposal: { kind: "tag", source: "ladder", realm: "INSPO", confidence: 0.5 } }),
+  });
+  d = await r.json();
+  eq("scoring a proposal ok", d.ok, true);
+  eq("on night one it changes nothing", d.scored.confidence, 0.5);
+  ok("and says why", Array.isArray(d.scored.learn.reasons));
+
+  // Loop 3 — the audit.
+  r = await call("/api/selfgaps", { headers: TOK });
+  d = await r.json();
+  eq("the audit ok", d.ok, true);
+  ok("it returns gaps as a list", Array.isArray(d.gaps));
+  // A GET must not spend. The probes are the only paid part of the audit.
+  eq("and asked for no probes", d.probes.ran, 0);
+
+  r = await call("/api/selfgaps/plan", { headers: TOK });
+  d = await r.json();
+  eq("the free plan ok", d.ok, true);
+  ok("it hands back a work list", Array.isArray(d.jobs));
+  ok("with a line he can read on a phone", typeof d.line === "string" && d.line.length > 0);
+
+  // The map: unbuilt is an explicit answer, not an empty map.
+  r = await call("/api/map", { headers: TOK });
+  d = await r.json();
+  eq("an unbuilt map is not a 500", r.status, 200);
+  eq("it says so", d.needsBuild, true);
+  eq("and never pretends to have zero regions", d.ok, false);
+
+  r = await call("/api/map/rebuild", { method: "POST", headers: TOK });
+  d = await r.json();
+  eq("rebuild ok", d.ok, true);
+  ok("it built regions", d.regions.length > 0);
+
+  r = await call("/api/map", { headers: TOK });
+  d = await r.json();
+  eq("now the map reads back", d.ok, true);
+  eq("at the top level", d.level, "regions");
+  ok("with a breadcrumb", Array.isArray(d.path) && d.path.length === 1);
+
+  r = await call("/api/map?region=" + encodeURIComponent(d.nodes[0].id), { headers: TOK });
+  d = await r.json();
+  eq("drilling in is one read", d.ok, true);
+  eq("and lands on clusters", d.level, "clusters");
+
+  r = await call("/map");
+  eq("the map page renders", r.status, 200);
+  ok("and is phone-sized", (await r.text()).includes("viewport"));
+
+  // Tier 1 — the Mac. A whole round trip through the router.
+  r = await call("/api/local", { headers: TOK });
+  d = await r.json();
+  eq("the pool reports ok", d.ok, true);
+  ok("and says whether it saw the whole archive", typeof d.complete === "boolean");
+
+  r = await call("/api/local/lease", { method: "POST", headers: JSONH, body: JSON.stringify({ runner: "mac", limit: 0 }) });
+  d = await r.json();
+  eq("limit 0 is a legal ping", d.ok, true);
+  eq("and hands out nothing", d.jobs.length, 0);
+
+  // Give the Mac something to do: an image ref with no caption. Seeded rather
+  // than saved, because /save's background pass captions an image on the way in
+  // — which is the Tier 2 path this one exists to avoid.
+  const imgId = "00000000000001-mac";
+  await env.REFS_KV.put(`ref:${imgId}`, JSON.stringify({
+    id: imgId, kind: "url", category: "image",
+    url: "https://cdn.example.com/rig.jpg", image: "https://cdn.example.com/rig.jpg",
+    host: "cdn.example.com", title: "Welded rig", tags: [],
+  }));
+
+  r = await call("/api/local/lease", { method: "POST", headers: JSONH, body: JSON.stringify({ runner: "mac", limit: 4, kinds: ["caption"] }) });
+  d = await r.json();
+  const job = (d.jobs || []).find((j) => j.refId === imgId);
+  ok("the image is offered to the Mac", Boolean(job));
+  ok("with bytes it can fetch without a token", /^https?:/.test(job.payload.imageUrl));
+
+  r = await call("/api/local/submit", {
+    method: "POST", headers: JSONH,
+    body: JSON.stringify({
+      runner: "mac",
+      results: [{ jobId: job.jobId, leaseId: job.leaseId, ok: true, kind: "caption", result: { caption: "a welded rig against a white cyc" }, model: "llava:latest" }],
+    }),
+  });
+  d = await r.json();
+  eq("the answer is applied", d.applied, 1);
+  eq("with nothing stale", d.stale.length, 0);
+
+  r = await call("/api/ref/" + imgId, { headers: TOK });
+  d = await r.json();
+  eq("and the caption is on the ref", d.ref.caption, "a welded rig against a white cyc");
+
+  // The whole point of Tier 1: free compute must not spend the paid ration.
+  r = await call("/api/budget", { headers: TOK });
+  d = await r.json();
+  eq("no vision ration was burned by the Mac", d.ledger.vision, 0);
+
   // auth still guards everything new
   for (const [path, opts] of [
     ["/api/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }],
@@ -205,6 +338,18 @@ const run = async () => {
     ["/api/similar/x", {}],
     ["/api/profile", {}],
     ["/api/reindex", { method: "POST" }],
+    ["/api/ladder/stats", {}],
+    ["/api/ladder/next/x", {}],
+    ["/api/ladder/run", { method: "POST" }],
+    ["/api/learn", {}],
+    ["/api/learn/score", { method: "POST" }],
+    ["/api/selfgaps", {}],
+    ["/api/selfgaps/plan", {}],
+    ["/api/map", {}],
+    ["/api/map/rebuild", { method: "POST" }],
+    ["/api/local", {}],
+    ["/api/local/lease", { method: "POST" }],
+    ["/api/local/submit", { method: "POST" }],
   ]) {
     const res = await call(path, opts);
     eq(`${path} without token -> 401`, res.status, 401);

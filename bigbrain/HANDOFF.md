@@ -215,18 +215,61 @@ Auth on everything under `/api` and `/save`: header `X-Auth-Token`.
 | POST | `/save?similar=1` | save a ref (JSON, or raw bytes + `X-Note`) |
 | GET | `/api/list` | keyword search / filter / page |
 | GET·PATCH·DELETE | `/api/ref/:id` | one ref |
+| POST | `/api/ref/:id/thumb` | repair one ref's thumbnail |
+| GET | `/api/export` · POST `/api/import` | NDJSON out, bulk in |
 | POST | `/api/search` | semantic search `{q, cat, realm, limit}` |
 | POST·GET | `/api/ask` | answer from refs `{q, deep}`; `?format=text` for Siri |
 | GET | `/api/similar/:id` | nearest refs to this one |
 | GET | `/api/profile` | taste fingerprint |
 | GET·POST | `/api/queue` `/api/queue/:id` `/api/queue/stats` | the swipe feed |
+| GET | `/api/queue/export` · POST `/api/queue/applied` | approved-and-unpushed; mark pushed |
+| POST | `/api/queue/propose` | drop a batch of proposals into the queue |
 | POST | `/api/propose` · GET `/api/propose/preview` | generate proposals |
+| POST | `/api/classify` | Tier 0 realm classification, free, no model |
 | POST | `/api/thumbs` | og:image backfill |
 | POST | `/api/reindex?deep=1` | rebuild embeddings, cursor-paged |
 | GET | `/api/brief` · page `/brief` | morning brief |
-| GET | `/api/nightly` · POST `/api/nightly/run` | cron records / manual run |
+| GET | `/api/nightly` · `/api/nightly/:day` · POST `/api/nightly/run` | cron records / manual run |
 | GET | `/api/budget` | tonight's ledger and what still fits |
 | GET | `/health` | liveness + which subsystems are wired |
+
+**Loop 1 — the enrichment ladder** (`src/ladder.js`)
+
+| method | path | purpose |
+|---|---|---|
+| GET | `/api/ladder/stats` | level histogram, permanent blocks, what's next |
+| GET | `/api/ladder/next/:id` | why is this one ref stuck? |
+| POST | `/api/ladder/run` | advance a cohort by one rung each `{limit, tier, budget, retry}` |
+
+**Loop 2 — learning from swipes** (`src/learn.js`)
+
+| method | path | purpose |
+|---|---|---|
+| GET | `/api/learn` | acceptance per kind/source/axis/realm; `?rebuild=1` replays the log |
+| POST | `/api/learn/score` | what learning would do to one proposal, and why |
+
+**Loop 3 — self-directed gap-finding** (`src/selfgaps.js`)
+
+| method | path | purpose |
+|---|---|---|
+| GET | `/api/selfgaps` | the audit. Free unless `?probe=1` |
+| GET·POST | `/api/selfgaps/plan` | tonight's work list. **The GET never spends** |
+
+**The phone map** (`src/mapdata.js`, page `src/pages/map.js`)
+
+| method | path | purpose |
+|---|---|---|
+| GET | `/map` | the page: regions → clusters → refs, one tap at a time |
+| GET | `/api/map?region=&cluster=` | one level — one KV read, no scan, no vector query |
+| POST | `/api/map/rebuild` | recompute the whole tree (also the nightly's last job) |
+
+**Tier 1 — his Mac over Ollama** (`src/local.js`, runner in `bigbrain/local/`)
+
+| method | path | purpose |
+|---|---|---|
+| POST | `/api/local/lease` | hand out caption/summarize work. `limit: 0` is a ping |
+| POST | `/api/local/submit` | answers, failures and hand-backs, in one call |
+| GET | `/api/local` | what's still waiting for the Mac, and what's leased |
 
 ### Tests
 **No deps, no network, no bindings.** `cd bigbrain/worker && npm test`
@@ -276,14 +319,40 @@ real. Deploy, then check each:
 - `/api/propose` — fills the queue. Until it runs, `/queue` is empty.
 - `/brief` — the morning brief page.
 - nightly cron at `10 11 * * *` UTC.
+- **Loop 1** — the enrichment ladder (`src/ladder.js`). Levels are *inferred*
+  from what a ref carries, so the 1,578 already in KV need no backfill. Permanent
+  failures close a rung; transient ones back off 1/2/4/8 days and convert to
+  permanent after four. `/api/ladder/stats` is the number that says whether the
+  nightly is working — a histogram that hasn't moved in a week is a broken cron.
+- **Loop 2** — learning from swipes (`src/learn.js`), recorded by one line in
+  `stage.js`'s `decide()`. Rates are `null` and never `0` before he has decided
+  anything. Suppression needs 12 decided swipes *and* an upper bound under 25%,
+  and probes about one pass in ten so it stays reversible.
+- **Loop 3** — self-directed gap-finding (`src/selfgaps.js`). Ranks findings by
+  impact per dollar and hands the nightly a work list. Every taste call in that
+  list is a `stage` job; nothing it finds is applied.
+- **Mobile map** — `/map` plus `src/mapdata.js`. Three KV key shapes so drilling
+  in is one read at any depth. Regions capped at 9 so the opening screen fits a
+  thumb. **Nothing renders until `POST /api/map/rebuild` (or one nightly) has
+  run** — an unbuilt map answers `needsBuild`, and the page offers a build button.
+- **Tier 1 compute** — `POST /api/local/lease` · `/api/local/submit` plus the
+  runner in `bigbrain/local/`. Leases, not claims: a closed laptop lapses back
+  into the pool with no attempt charged to the ref. Local captions charge tier 1
+  with `vision:false`, so they never touch the 20/night paid ration.
+- **The nightly, rewritten** to run the loops in order — loop 3 plans, loop 1
+  climbs inside that plan, loop 2 decides which generators may still ask — and to
+  rebuild the map last. Seven jobs; still quotes before touching anything and
+  still stops the moment the governor refuses.
 
-### Not started — this is the expansion
-- **Loop 1**: per-ref enrichment levels; the ladder as a stateful climb
-- **Loop 2**: learning from swipe decisions
-- **Loop 3**: self-directed gap-finding and work-queueing
-- **Mobile map**: phone-native rebuild with progressive zoom
-- **Tier 1 compute**: local Ollama runner on his Mac
+### Not started
 - **Tier 3 compute**: scheduled Claude session for judgment
+- **Applying approved proposals** — nothing writes `ref.realm` or `ref.tags`.
+  The queue records his answer and `/api/queue/export` hands it over; the step
+  that puts it back on the ref (and re-embeds) does not exist yet.
+- **Loop 3's `stage` jobs** — the audit finds near-duplicates and tag
+  contradictions but has no proposal shape for them, and `stage.js` drops any
+  proposal that changes no title, realm or tag. The nightly reports these as
+  unhandled rather than queueing an empty card.
 - **Realm back into Notion** — realm exists only in the worker; writing it back
   needs a Notion token the worker doesn't have and he hasn't been asked for.
 - **The IG join** — needs a *fresh* Instagram export. His is from 2026-04-22 and
