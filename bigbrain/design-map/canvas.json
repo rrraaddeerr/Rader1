@@ -1,0 +1,15 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 390, "h": 990 },
+    { "file": "Alt.dc.html", "x": 520, "y": 0, "w": 390, "h": 1290 },
+    { "file": "Clusters.dc.html", "x": 1040, "y": 0, "w": 390, "h": 1600 },
+    { "file": "Refs.dc.html", "x": 1560, "y": 0, "w": 390, "h": 1060 }
+  ],
+  "annotations": [
+    { "id": "note-main", "x": 0, "y": -140, "w": 390, "text": "Leading direction — three regions, each subtly tilted in 3D. Fully tappable, cheap to build for real." },
+    { "id": "note-alt", "x": 520, "y": -170, "w": 390, "text": "Bolder alternate — an arced fan of imagery above the regions, closer to the reference. More custom build effort; the fan stays a hero-only motif, never the ref grid." },
+    { "id": "note-clusters", "x": 1040, "y": -140, "w": 390, "text": "One level in — same atmosphere, region glow carried forward." },
+    { "id": "note-refs", "x": 1560, "y": -140, "w": 390, "text": "The ref grid — still the paginated, phone-safe version underneath." }
+  ],
+  "launch": { "view": "focused", "file": "Main.dc.html" }
+}

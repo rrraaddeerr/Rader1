@@ -34,3 +34,11 @@ yarn-error.log*
 /scripts/credentials.json
 /scripts/token.json
 node_modules/
+
+# Claude Design canvases: the .dc.html sources + canvas.json are the real
+# working files, kept in git. The seeded output (~2MB, editor bundle baked
+# in) is fully regenerable from them via the design skill's seed-canvas.mjs
+# and republishes to the same Artifact URL — no reason to version it.
+bigbrain/design-map/*.html
+!bigbrain/design-map/*.dc.html
+
