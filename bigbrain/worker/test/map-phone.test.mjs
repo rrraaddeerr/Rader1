@@ -156,6 +156,40 @@ const LEVELS = {
   },
 };
 
+// --------------------------------------------- the top level is his pictures, not boxes
+{
+  // A region with the samples a rebuilt index carries, and one from before
+  // (a single representative image), side by side.
+  const samples = Array.from({ length: 8 }, (_, i) => ({
+    image: "https://img.test/s" + i + ".jpg",
+    caption: i === 0 ? "a curtain rig, built to do the effect for real" : i === 2 ? "the screen behind the DJ" : "",
+  }));
+  const levels = {
+    ...LEVELS,
+    "/api/map": {
+      ...LEVELS["/api/map"],
+      nodes: [
+        { id: "inspo--all", label: "INSPO", realm: "INSPO", count: 1187, clusterCount: 24, image: "", samples },
+        { id: "know--all", label: "KNOWLEDGE", realm: "KNOWLEDGE", count: 152, clusterCount: 7, image: "https://img.test/one.jpg" },
+      ],
+    },
+  };
+  const p = boot(levels, { startHash: "#/" });
+  await settle();
+  const [inspo, know] = p.$("#stage").children;
+  ok("a region is a band, and a tap", /\bband\b/.test(inspo.className) && inspo.tagName === "button");
+  eq("it pins up to seven of his own pictures", (inspo.innerHTML.match(/<img /g) || []).length, 7);
+  ok("the biggest carries what the vision pass saw", inspo.innerHTML.includes("a curtain rig, built to do the effect for real"));
+  ok("and a second picture's caption sits under the name", inspo.innerHTML.includes("the screen behind the DJ"));
+  ok("with the realm's accent from /brief", inspo.innerHTML.includes("--rc:#c9a7ff"));
+  eq("an old index still shows the one picture it has", (know.innerHTML.match(/<img /g) || []).length, 1);
+  ok("and never an empty chip beside it", !/class="ch empty"/.test(know.innerHTML));
+  ok("but the foot says how to fill it", /rebuild/.test(p.$("#foot").textContent));
+  inspo.tap();
+  await settle();
+  eq("the band drills in", p.$("#h1").textContent, "INSPO");
+}
+
 // ------------------------------------------------- one tap must not cost 1,146 tiles
 {
   const p = boot(LEVELS, { startHash: "#/r/inspo--all/c/inspo--all-c25" });

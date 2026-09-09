@@ -171,6 +171,9 @@ export function cardFor(ref = {}) {
     host: ref.host || "",
     url: ref.url || "",
     category: ref.category || "link",
+    // What the vision rung saw in the picture, when it has looked. This is the
+    // one line on a tile that teaches him something, so it rides along.
+    caption: String(ref.caption || "").slice(0, 160),
   };
 }
 
@@ -178,6 +181,28 @@ export function cardFor(ref = {}) {
 export function representativeImage(cards = []) {
   const hit = cards.find((c) => c && c.image);
   return hit ? hit.image : "";
+}
+
+/**
+ * A handful of real pictures to stand for a group on the level above it.
+ *
+ * Captioned ones first: a tile that can say what is in the picture beats one
+ * that can only show it. Never more than `n`, and never a card without an
+ * image — an empty slot in a collage is just a hole.
+ */
+export function samplesFor(cards = [], n = 8) {
+  const pick = (c) => ({ image: c.image, caption: String(c.caption || "").slice(0, 100) });
+  const seen = new Set();
+  const out = [];
+  for (const pass of [(c) => c.caption, () => true]) {
+    for (const c of cards) {
+      if (out.length >= n) break;
+      if (!c || !c.image || seen.has(c.image) || !pass(c)) continue;
+      seen.add(c.image);
+      out.push(pick(c));
+    }
+  }
+  return out;
 }
 
 const STOPWORDS = new Set([
@@ -290,6 +315,7 @@ export function groupRegions(cards = [], { maxRegions = MAX_REGIONS, minRegion =
     cards: b.cards,
     count: b.cards.length,
     image: representativeImage(b.cards),
+    samples: samplesFor(b.cards, 8),
   }));
 }
 
@@ -544,6 +570,7 @@ export async function buildMapTree(env, opts = {}) {
         via: c.via,
         count: c.cards.length,
         image: representativeImage(c.cards),
+        samples: samplesFor(c.cards, 4),
       };
       clusterNodes.push(node);
 
@@ -577,6 +604,7 @@ export async function buildMapTree(env, opts = {}) {
       axis: region.axis,
       count: region.count,
       image: region.image,
+      samples: region.samples || [],
       clusterCount: clusterNodes.length,
     };
     regionNodes.push(regionNode);

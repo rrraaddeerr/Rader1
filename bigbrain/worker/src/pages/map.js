@@ -89,6 +89,42 @@ export const MAP_HTML = /* html */ `<!doctype html>
   .pill{position:absolute;right:8px;top:8px;background:#000c;border:1px solid var(--line);border-radius:999px;
         font-size:11px;font-weight:700;padding:3px 9px;color:var(--ink)}
 
+  /* --- the top level: one band per region, a collage of his own pictures. ---
+     Real thumbnails, overlapping and slightly turned, with what the vision
+     pass saw written on the biggest one. The region name sits under it. Whole
+     band is the tap. The accent colour is the realm's, same as /brief. */
+  .grid.regions{grid-template-columns:1fr;gap:14px}
+  .band{border-radius:22px;background:var(--panel)}
+  .band .col{display:block;position:relative;height:236px;overflow:hidden;background:#0b0e14}
+  .band .glow{position:absolute;inset:-40px;pointer-events:none;
+              background:radial-gradient(ellipse 70% 60% at 30% 20%,var(--rc,#47536e) 0%,transparent 60%);opacity:.22}
+  .band .grain{position:absolute;inset:0;pointer-events:none;opacity:.07;mix-blend-mode:overlay;
+               background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E")}
+  .band .ch{display:block;position:absolute;border-radius:12px;overflow:hidden;background:#161a22;border:1px solid #0009;
+            box-shadow:0 14px 28px -12px #000c;transform:rotate(var(--r,0deg))}
+  .band .ch img{width:100%;height:100%;object-fit:cover;display:block}
+  .band .ch.empty{background:linear-gradient(150deg,#1a1f2b,#111420)}
+  .band .ch .cap{position:absolute;left:7px;right:7px;bottom:7px;background:rgba(15,17,21,.8);border-radius:7px;
+                 padding:5px 7px;font-size:11px;font-weight:700;line-height:1.25;color:var(--ink);
+                 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .band .lab{height:auto;padding:12px 14px 14px}
+  .band .lab .t{font-size:22px;letter-spacing:-.015em;-webkit-line-clamp:1}
+  .band .lab .t::before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--rc,#47536e);
+                        margin:0 9px 2px 0;vertical-align:middle}
+  .band .lab .s{text-transform:none;letter-spacing:0;font-size:13px;margin-top:2px}
+  .band .lab .q{display:block;margin-top:8px;font-size:13px;line-height:1.4;color:var(--ink);font-style:italic;opacity:.9;
+                overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .band .lab .q::before{content:"“"}.band .lab .q::after{content:"”"}
+  .tile.skel.band .col{height:236px}
+
+  /* One level in: a cluster tile is a 2x2 of its pictures, not one of them. */
+  .tile .pic.mosaic{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:2px;aspect-ratio:5/4}
+  .tile .pic.mosaic img{width:100%;height:100%;object-fit:cover;display:block}
+  .tile .pic.mosaic .cell{background:#12161f;overflow:hidden}
+  .tile .lab .s.cap{text-transform:none;letter-spacing:0;white-space:normal;line-height:1.3;
+                    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;color:#c3cbdb}
+  .grid.refs .lab .s.cap{-webkit-line-clamp:1}
+
   /* Skeletons carry the exact count that will land, in the same box. */
   .tile.skel{border-style:dashed;pointer-events:none}
   .tile.skel .pic{background:linear-gradient(100deg,#141924 30%,#1d2432 50%,#141924 70%);background-size:220% 100%;animation:sh 1.1s linear infinite}
@@ -170,6 +206,17 @@ let feed=null;
 
 function esc(s){return(s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));}
 function icon(c){return({image:"🖼️",video:"🎬",audio:"🎵",post:"💬",article:"📰",code:"💻",shop:"🛍️",document:"📄",note:"📝"})[c]||"🔗";}
+/** Realm accents — the same four /brief uses, so a colour means one thing everywhere. */
+const RC={INSPO:"#c9a7ff",KNOWLEDGE:"#7fe0b0","CULTURE+NEWS":"#ffc978",SELF:"#9dc0ff"};
+
+/**
+ * Where the pictures in a region's collage go. Seven slots, hand-placed so
+ * they overlap and lean the way a pinboard does; the first is the big one and
+ * carries the caption. Percent widths so the band can be any width; pixel
+ * heights so the band is always the same height and never reflows.
+ *   [left%, top px, width%, height px, rotate deg]
+ */
+const SLOTS=[[26,14,44,150,-3],[2,30,24,96,5],[70,20,27,88,-7],[3,130,27,92,3],[68,112,28,104,6],[24,166,30,74,-4],[52,170,26,70,5]];
 
 // ---- routing ----
 // #/                       regions
@@ -249,14 +296,52 @@ function tile(o){
   const el=document.createElement(kind);
   el.className="tile"+(kind==="div"?" flat":"");
   if(o.href){el.href=o.href;el.target="_blank";el.rel="noopener";}
-  const pic=o.image
-    ? '<span class="pic"><img loading="lazy" decoding="async" src="'+esc(o.image)+'" alt=""></span>'
-    : '<span class="pic"><span class="ph">'+(o.glyph||"◻︎")+'</span></span>';
+  const img=src=>'<img loading="lazy" decoding="async" src="'+esc(src)+'" alt="">';
+  const pics=(o.samples||[]).filter(s=>s&&s.image).slice(0,4);
+  // Two or more pictures make a mosaic; one makes a picture; none makes a glyph.
+  const pic=pics.length>1
+    ? '<span class="pic mosaic">'+pics.map(s=>'<span class="cell">'+img(s.image)+'</span>').join("")+'</span>'
+    : (o.image||pics.length)
+      ? '<span class="pic">'+img(o.image||pics[0].image)+'</span>'
+      : '<span class="pic"><span class="ph">'+(o.glyph||"◻︎")+'</span></span>';
+  // The second line is what the vision pass saw, when it has looked — the
+  // only text on a tile that says something the picture doesn't.
+  const sub=o.cap?'<span class="s cap">'+esc(o.cap)+'</span>':o.sub?'<span class="s">'+esc(o.sub)+'</span>':"";
   el.innerHTML=pic+
     (o.count!=null?'<span class="pill">'+o.count+'</span>':"")+
-    '<span class="lab"><span class="t">'+esc(o.title)+'</span>'+
-    (o.sub?'<span class="s">'+esc(o.sub)+'</span>':"")+'</span>';
+    '<span class="lab"><span class="t">'+esc(o.title)+'</span>'+sub+'</span>';
   if(o.onTap)el.addEventListener("click",e=>{if(e&&e.preventDefault)e.preventDefault();o.onTap();});
+  return el;
+}
+
+/**
+ * A region, as a band: his own pictures pinned up over the realm's glow, the
+ * biggest one saying what is in it, and the name underneath. Only pictures
+ * that exist get pinned — an empty slot is a hole, not a design.
+ */
+function band(n,onTap){
+  const el=document.createElement("button");
+  el.className="tile band";
+  // The accent rides on the two children as a CSS variable, so the glow, the
+  // dot and the caption all take the realm's colour from one place.
+  const rc=' style="--rc:'+(RC[n.realm]||"#47536e")+'"';
+  let pics=(n.samples||[]).filter(s=>s&&s.image);
+  if(!pics.length&&n.image)pics=[{image:n.image,caption:""}];
+  pics=pics.slice(0,SLOTS.length);
+  const chips=pics.map((s,i)=>{
+    const p=SLOTS[i];
+    return '<span class="ch" style="left:'+p[0]+'%;top:'+p[1]+'px;width:'+p[2]+'%;height:'+p[3]+'px;--r:'+p[4]+'deg">'+
+      '<img loading="lazy" decoding="async" src="'+esc(s.image)+'" alt="">'+
+      (i===0&&s.caption?'<span class="cap">'+esc(s.caption)+'</span>':"")+'</span>';
+  }).join("");
+  // A second thing it saw, under the name — a different picture's, so the
+  // band teaches two things, not one twice.
+  const q=pics.slice(1).map(s=>s.caption).find(Boolean)||"";
+  el.innerHTML='<span class="col"'+rc+'><span class="glow"></span>'+chips+'<span class="grain"></span></span>'+
+    '<span class="lab"'+rc+'><span class="t">'+esc(n.label)+'</span>'+
+    '<span class="s">'+n.count+' refs · '+(n.clusterCount||0)+' clusters'+(n.sublabel?' · '+esc(n.sublabel):"")+'</span>'+
+    (q?'<span class="q">'+esc(q)+'</span>':"")+'</span>';
+  el.addEventListener("click",e=>{if(e&&e.preventDefault)e.preventDefault();onTap();});
   return el;
 }
 
@@ -266,8 +351,9 @@ function skeleton(n,cls){
   const many=Math.max(1,Math.min(n||6,cap));
   for(let i=0;i<many;i++){
     const el=document.createElement("div");
-    el.className="tile skel";
-    el.innerHTML='<span class="pic"></span><span class="lab"><span class="bar2"></span></span>';
+    el.className="tile skel"+(cls==="regions"?" band":"");
+    el.innerHTML=(cls==="regions"?'<span class="col pic"></span>':'<span class="pic"></span>')+
+      '<span class="lab"><span class="bar2"></span></span>';
     g.appendChild(el);
   }
 }
@@ -311,15 +397,17 @@ function renderRegions(d){
   $("#h1").textContent="Map";
   $("#count").textContent=d.total?d.total+" refs":"";
   const g=$("#stage");g.className="grid regions";g.innerHTML="";
+  let thin=false;
   (d.nodes||[]).forEach(n=>{
-    g.appendChild(tile({
-      title:n.label,sub:n.sublabel||n.realm,image:n.image,count:n.count,glyph:"🧠",
-      onTap:()=>go({level:"clusters",region:n.id,cluster:""})
-    }));
+    if(!(n.samples||[]).length)thin=true;
+    g.appendChild(band(n,()=>go({level:"clusters",region:n.id,cluster:""})));
     prefetch({level:"clusters",region:n.id,cluster:""});
   });
   const c=d.clustering||{};
   const bits=[];
+  // An index from before the collages existed has one picture per region.
+  // Say so, rather than let a sparse band read as a sparse archive.
+  if(thin&&(d.nodes||[]).length)bits.push("rebuild (↻) to fill the collages");
   if(d.builtAt)bits.push("built "+new Date(d.builtAt).toLocaleString());
   if(c.vectors===false)bits.push("grouped by kind — no vector index");
   if(d.truncated)bits.push("partial: the scan hit its limit");
@@ -332,8 +420,9 @@ function renderClusters(d){
   $("#count").textContent=(r.count||0)+" refs · "+(d.nodes||[]).length+" clusters";
   const g=$("#stage");g.className="grid clusters";g.innerHTML="";
   (d.nodes||[]).forEach(n=>{
+    const seen=(n.samples||[]).map(s=>s&&s.caption).find(Boolean)||"";
     g.appendChild(tile({
-      title:n.label,sub:n.via==="rule"?"by kind":"",image:n.image,count:n.count,glyph:"◍",
+      title:n.label,sub:n.via==="rule"?"by kind":"",cap:seen,image:n.image,samples:n.samples,count:n.count,glyph:"◍",
       onTap:()=>go({level:"refs",region:state.region||r.id,cluster:n.id})
     }));
   });
@@ -389,7 +478,7 @@ function drawRefs(n){
   for(let i=feed.drawn;i<stop;i++){
     const r=feed.nodes[i]||{};
     g.appendChild(tile({
-      title:r.title,sub:r.host,image:r.image,glyph:icon(r.category),
+      title:r.title,sub:r.host,cap:r.caption||"",image:r.image,glyph:icon(r.category),
       // No url is no destination — tile() makes that a flat div, not a button.
       href:r.url||""
     }));

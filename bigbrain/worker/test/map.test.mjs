@@ -9,6 +9,7 @@ import {
   regionOf,
   cardFor,
   representativeImage,
+  samplesFor,
   labelForCluster,
   groupRegions,
   fallbackKeyFor,
@@ -112,7 +113,18 @@ eq("no axis is null, not guessed", regionOf({ realm: "INSPO", title: "zzz qqq" }
 eq("a junk realm falls back to the classifier", typeof regionOf({ realm: "NONSENSE" }).realm, "string");
 
 const card = cardFor({ id: "a", title: "T", image: "i", host: "h.com", url: "u", category: "video", body: "huge" });
-eq("card keeps only what the phone renders", Object.keys(card).sort().join(","), "category,host,id,image,title,url");
+eq("card keeps only what the phone renders", Object.keys(card).sort().join(","), "caption,category,host,id,image,title,url");
+{
+  const cards = [
+    { image: "a.jpg" }, { image: "" , caption: "no picture" }, { image: "b.jpg", caption: "a curtain rig" },
+    { image: "a.jpg", caption: "" }, { image: "c.jpg" }, { image: "d.jpg", caption: "mirror" },
+  ];
+  const s = samplesFor(cards, 3);
+  eq("samples put captioned pictures first", s.map((x) => x.image).join(","), "b.jpg,d.jpg,a.jpg");
+  ok("never a sample without an image", samplesFor(cards, 9).every((x) => x.image));
+  eq("and never the same picture twice", samplesFor(cards, 9).length, 4);
+  eq("empty in, empty out", samplesFor([], 4).length, 0);
+}
 eq("card falls back to the host for a title", cardFor({ host: "h.com" }).title, "h.com");
 eq("blank ref still makes a card", cardFor({}).title, "Untitled");
 
