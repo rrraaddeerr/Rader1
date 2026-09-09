@@ -11,18 +11,24 @@
     body{margin:0}
     a{color:#3b82f6;text-decoration:none}
     a:hover{color:#3b82f6}
-    @keyframes riseInspo{from{opacity:0;transform:translateY(16px) rotateY(-2deg) rotateX(1deg)}to{opacity:1;transform:translateY(0) rotateY(-2deg) rotateX(1deg)}}
-    @keyframes riseCulture{from{opacity:0;transform:translateY(16px) rotateY(2deg) rotateX(-1deg)}to{opacity:1;transform:translateY(0) rotateY(2deg) rotateX(-1deg)}}
-    @keyframes riseKnowledge{from{opacity:0;transform:translateY(16px) rotateY(-1.5deg) rotateX(-1deg)}to{opacity:1;transform:translateY(0) rotateY(-1.5deg) rotateX(-1deg)}}
-    .card-inspo{animation:riseInspo .55s cubic-bezier(.22,1,.36,1) both}
-    .card-culture{animation:riseCulture .55s cubic-bezier(.22,1,.36,1) .1s both}
-    .card-knowledge{animation:riseKnowledge .55s cubic-bezier(.22,1,.36,1) .2s both}
+    @keyframes floatIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+    .c1{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .05s both}
+    .c2{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .12s both}
+    .c3{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .1s both}
+    .c4{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .18s both}
+    .c5{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .16s both}
+    .c6{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .24s both}
+    .c7{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .28s both}
+    .c8{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .32s both}
+    .c9{animation:floatIn .5s cubic-bezier(.22,1,.36,1) .36s both}
   </style>
 </helmet>
 
-<div style="position:relative;width:390px;min-height:940px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e7ecf5;background:#0f1115">
+<div style="position:relative;width:390px;min-height:1060px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e7ecf5;background:#0f1115">
 
-  <div style="position:absolute;left:-40px;right:-40px;top:-40px;height:420px;pointer-events:none;background:radial-gradient(ellipse 380px 220px at 30% 0%, rgba(201,167,255,.10), transparent 60%), radial-gradient(ellipse 320px 200px at 78% 10%, rgba(255,201,120,.09), transparent 60%), radial-gradient(ellipse 300px 200px at 55% 25%, rgba(127,224,176,.08), transparent 60%)"></div>
+  <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:.05;mix-blend-mode:overlay;pointer-events:none"><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix></filter><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+
+  <div style="position:absolute;left:-60px;right:-60px;top:-60px;height:520px;pointer-events:none;background:radial-gradient(ellipse 360px 260px at 24% 6%, rgba(201,167,255,.14), transparent 62%), radial-gradient(ellipse 320px 240px at 84% 18%, rgba(255,201,120,.11), transparent 60%), radial-gradient(ellipse 300px 220px at 55% 34%, rgba(127,224,176,.10), transparent 62%)"></div>
 
   <div style="position:relative;display:flex;align-items:center;gap:8px;padding:20px 10px 6px;border-bottom:1px solid #283042">
     <div style="flex:none;width:44px;height:44px;border:1px solid #283042;background:#161a22;color:#e7ecf5;border-radius:14px;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;opacity:.35">&#8249;</div>
@@ -31,64 +37,93 @@
   </div>
 
   <div style="position:relative;padding:22px 18px 30px">
-    <h1 style="margin:0 0 6px;font-size:30px;font-weight:800;letter-spacing:-.02em;line-height:1.08">Your archive</h1>
-    <div style="font-size:13px;color:#9aa6bd;letter-spacing:.01em">1,575 refs &middot; 3 regions</div>
+    <h1 style="margin:0 0 2px;font-size:30px;font-weight:800;letter-spacing:-.02em;line-height:1.05">Your archive</h1>
+    <div style="font-size:13px;color:#9aa6bd;letter-spacing:.01em">1,575 refs, three ways of looking at them</div>
 
-    <div style="margin-top:30px;perspective:1200px">
+    <!-- the collage: a moodboard, not a dashboard. Overlapping, rotated, and
+         carrying real fragments of what is actually in the archive — the point
+         is that this screen already teaches you something before you tap. -->
+    <div style="position:relative;height:420px;margin:22px 0 0">
 
-      <div class="card-inspo" style="position:relative;border:1px solid #382a52;background:linear-gradient(155deg,#1c1830,#161a22 62%);border-radius:20px;overflow:hidden;box-shadow:0 18px 40px -18px rgba(201,167,255,.35)">
-        <div style="position:absolute;inset:0;background:radial-gradient(ellipse 260px 160px at 85% -10%, rgba(201,167,255,.22), transparent 65%)"></div>
-        <div style="position:relative;display:flex;gap:10px;padding:16px 16px 0">
-          <div style="flex:1.4;aspect-ratio:1/1;border-radius:12px;background:linear-gradient(135deg,#2a2340,#181425);display:flex;align-items:center;justify-content:center;border:1px solid #392f52">
-            <svg width="24" height="24" viewBox="0 0 20 20" style="color:#c9a7ff"><rect x="3" y="4" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"></rect><circle cx="7.3" cy="8.3" r="1.3" fill="currentColor"></circle><path d="M4 14.5l4.2-4.3 2.6 2.6 2.4-3 3.8 4.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"></path></svg>
-          </div>
-          <div style="flex:1;display:flex;flex-direction:column;gap:10px">
-            <div style="flex:1;border-radius:12px;background:linear-gradient(135deg,#241f38,#171320);border:1px solid #392f52;display:flex;align-items:center;justify-content:center">
-              <svg width="19" height="19" viewBox="0 0 20 20" style="color:#c9a7ff"><circle cx="10" cy="10" r="8.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle><path d="M8.2 6.8l5.4 3.2-5.4 3.2z" fill="currentColor"></path></svg>
-            </div>
-            <div style="flex:1;border-radius:12px;background:linear-gradient(135deg,#231d36,#16121d);border:1px solid #392f52;display:flex;align-items:center;justify-content:center">
-              <svg width="19" height="19" viewBox="0 0 20 20" style="color:#c9a7ff"><path d="M3.5 5.5h13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H9l-3.2 2.6V13.5h-2.3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path></svg>
-            </div>
-          </div>
-        </div>
-        <div style="position:relative;padding:14px 16px 18px">
-          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
-            <div style="font-size:20px;font-weight:800;letter-spacing:-.01em;color:#e7ecf5">INSPO</div>
-            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#c9a7ff">everything else</div>
-          </div>
-          <div style="margin-top:4px;font-size:13px;color:#9aa6bd">1,187 refs &middot; 24 clusters</div>
-        </div>
+      <div class="c1" style="position:absolute;left:96px;top:0;width:158px;height:168px;transform:rotate(-3deg);border-radius:16px;overflow:hidden;border:1px solid #392f52;background:linear-gradient(150deg,#241d38,#15121c);box-shadow:0 14px 30px -14px rgba(0,0,0,.6)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 30% 18%, rgba(201,167,255,.28), transparent 65%)"></div>
+        <div style="position:absolute;top:-8px;left:16px;width:36px;height:16px;background:rgba(231,236,245,.14);transform:rotate(-7deg);border-radius:2px"></div>
+        <div style="position:absolute;right:10px;top:10px;width:7px;height:7px;border-radius:50%;background:#c9a7ff"></div>
+        <div style="position:absolute;left:8px;right:8px;bottom:8px;background:rgba(15,17,21,.75);border-radius:7px;padding:5px 7px;font-size:10.5px;font-weight:700;color:#e7ecf5;line-height:1.2">a curtain rig, built to do the effect for real</div>
       </div>
 
-      <div class="card-culture" style="position:relative;margin-top:14px;border:1px solid #4a3820;background:linear-gradient(155deg,#241c14,#161a22 62%);border-radius:20px;overflow:hidden;box-shadow:0 14px 32px -18px rgba(255,201,120,.3)">
-        <div style="position:absolute;inset:0;background:radial-gradient(ellipse 220px 140px at 12% -10%, rgba(255,201,120,.2), transparent 65%)"></div>
-        <div style="position:relative;display:flex;align-items:center;gap:14px;padding:16px">
-          <div style="width:64px;height:64px;flex:none;border-radius:12px;background:linear-gradient(135deg,#3a2c18,#20180d);border:1px solid #4a3820;display:flex;align-items:center;justify-content:center">
-            <svg width="21" height="21" viewBox="0 0 20 20" style="color:#ffc978"><path d="M3.5 5.5h13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H9l-3.2 2.6V13.5h-2.3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path></svg>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:18px;font-weight:800;letter-spacing:-.01em">CULTURE+NEWS</div>
-            <div style="margin-top:2px;font-size:12.5px;color:#9aa6bd">236 refs &middot; 11 clusters</div>
-          </div>
-        </div>
+      <div class="c2" style="position:absolute;left:0;top:26px;width:92px;height:108px;transform:rotate(6deg);border-radius:14px;overflow:hidden;border:1px solid #4a3820;background:linear-gradient(150deg,#2c2013,#171008);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 70% 25%, rgba(255,201,120,.26), transparent 65%)"></div>
+        <div style="position:absolute;right:9px;top:9px;width:6px;height:6px;border-radius:50%;background:#ffc978"></div>
       </div>
 
-      <div class="card-knowledge" style="position:relative;margin-top:14px;border:1px solid #1e4634;background:linear-gradient(155deg,#131f1a,#161a22 62%);border-radius:20px;overflow:hidden;box-shadow:0 14px 32px -18px rgba(127,224,176,.28)">
-        <div style="position:absolute;inset:0;background:radial-gradient(ellipse 220px 140px at 88% -10%, rgba(127,224,176,.18), transparent 65%)"></div>
-        <div style="position:relative;display:flex;align-items:center;gap:14px;padding:16px">
-          <div style="width:64px;height:64px;flex:none;border-radius:12px;background:linear-gradient(135deg,#1d3327,#101c16);border:1px solid #1e4634;display:flex;align-items:center;justify-content:center">
-            <svg width="21" height="21" viewBox="0 0 20 20" style="color:#7fe0b0"><path d="M4 15V6.2c0-.5.34-.9.83-1.02L10 4l5.17 1.18c.5.12.83.53.83 1.02V15l-6-2-6 2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path></svg>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:18px;font-weight:800;letter-spacing:-.01em">KNOWLEDGE</div>
-            <div style="margin-top:2px;font-size:12.5px;color:#9aa6bd">152 refs &middot; 7 clusters</div>
-          </div>
-        </div>
+      <div class="c3" style="position:absolute;left:252px;top:16px;width:100px;height:92px;transform:rotate(-8deg);border-radius:14px;overflow:hidden;border:1px solid #1e4634;background:linear-gradient(150deg,#1a2e22,#0f1a14);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 30% 70%, rgba(127,224,176,.24), transparent 65%)"></div>
+        <div style="position:absolute;right:9px;top:9px;width:6px;height:6px;border-radius:50%;background:#7fe0b0"></div>
+      </div>
+
+      <div class="c4" style="position:absolute;left:0;top:158px;width:100px;height:98px;transform:rotate(4deg);border-radius:14px;overflow:hidden;border:1px solid #392f52;background:linear-gradient(150deg,#231d36,#16121d);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 60% 20%, rgba(201,167,255,.24), transparent 65%)"></div>
+        <div style="position:absolute;left:6px;right:6px;bottom:6px;background:rgba(15,17,21,.75);border-radius:6px;padding:4px 6px;font-size:9.5px;font-weight:700;color:#e7ecf5;line-height:1.2">rhinestone-on-mirror lighting trick</div>
+      </div>
+
+      <div class="c5" style="position:absolute;left:250px;top:126px;width:96px;height:112px;transform:rotate(7deg);border-radius:14px;overflow:hidden;border:1px solid #4a3820;background:linear-gradient(150deg,#2c2013,#171008);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 30% 25%, rgba(255,201,120,.24), transparent 65%)"></div>
+        <div style="position:absolute;top:-8px;right:14px;width:34px;height:16px;background:rgba(231,236,245,.14);transform:rotate(6deg);border-radius:2px"></div>
+        <div style="position:absolute;right:9px;top:9px;width:6px;height:6px;border-radius:50%;background:#ffc978"></div>
+      </div>
+
+      <div class="c6" style="position:absolute;left:92px;top:186px;width:146px;height:122px;transform:rotate(-5deg);border-radius:15px;overflow:hidden;border:1px solid #1e4634;background:linear-gradient(150deg,#1a2e22,#0f1a14);box-shadow:0 12px 26px -14px rgba(0,0,0,.58)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 25% 20%, rgba(127,224,176,.26), transparent 65%)"></div>
+        <div style="position:absolute;right:10px;top:10px;width:7px;height:7px;border-radius:50%;background:#7fe0b0"></div>
+        <div style="position:absolute;left:8px;right:8px;bottom:8px;background:rgba(15,17,21,.75);border-radius:7px;padding:5px 7px;font-size:10px;font-weight:700;color:#e7ecf5;line-height:1.2">the screen behind the DJ, not the DJ</div>
+      </div>
+
+      <div class="c7" style="position:absolute;left:10px;top:294px;width:112px;height:100px;transform:rotate(-3deg);border-radius:14px;overflow:hidden;border:1px solid #392f52;background:linear-gradient(150deg,#241d38,#15121c);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 65% 70%, rgba(201,167,255,.22), transparent 65%)"></div>
+        <div style="position:absolute;right:9px;top:9px;width:6px;height:6px;border-radius:50%;background:#c9a7ff"></div>
+      </div>
+
+      <div class="c8" style="position:absolute;left:142px;top:322px;width:102px;height:96px;transform:rotate(5deg);border-radius:14px;overflow:hidden;border:1px solid #4a3820;background:linear-gradient(150deg,#2c2013,#171008);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 30% 25%, rgba(255,201,120,.22), transparent 65%)"></div>
+        <div style="position:absolute;left:6px;right:6px;bottom:6px;background:rgba(15,17,21,.75);border-radius:6px;padding:4px 6px;font-size:9.5px;font-weight:700;color:#e7ecf5;line-height:1.2">TikTok &middot; Make Your Day</div>
+      </div>
+
+      <div class="c9" style="position:absolute;left:254px;top:258px;width:96px;height:106px;transform:rotate(-6deg);border-radius:14px;overflow:hidden;border:1px solid #1e4634;background:linear-gradient(150deg,#1a2e22,#0f1a14);box-shadow:0 10px 22px -12px rgba(0,0,0,.55)">
+        <div style="position:absolute;inset:0;background:radial-gradient(circle at 70% 20%, rgba(127,224,176,.22), transparent 65%)"></div>
+        <div style="position:absolute;top:-8px;left:14px;width:34px;height:16px;background:rgba(231,236,245,.14);transform:rotate(-6deg);border-radius:2px"></div>
+        <div style="position:absolute;right:9px;top:9px;width:6px;height:6px;border-radius:50%;background:#7fe0b0"></div>
       </div>
 
     </div>
 
-    <div style="display:flex;gap:8px;justify-content:center;margin-top:34px;flex-wrap:wrap">
+    <!-- the pulled quote: real output, verbatim, from Big Brain reading his
+         own archive — the thing this screen is proof-of-concept for. -->
+    <div style="margin-top:20px;padding:16px 2px 0;border-top:1px solid #232a38">
+      <div style="font-size:18px;font-style:italic;line-height:1.42;color:#e7ecf5;letter-spacing:-.005em">&ldquo;You build the effect, don&rsquo;t simulate it.&rdquo;</div>
+      <div style="margin-top:6px;font-size:11.5px;color:#9aa6bd">what Big Brain found, reading all 1,575 refs</div>
+    </div>
+
+    <!-- the three regions, now a quiet index rather than the whole show -->
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:22px">
+      <div style="display:flex;align-items:center;gap:11px;min-height:44px;padding:0 14px;border:1px solid #283042;background:#161a22;border-radius:14px">
+        <div style="width:8px;height:8px;border-radius:50%;background:#c9a7ff;flex:none"></div>
+        <div style="flex:1;font-weight:700;font-size:14px">INSPO</div>
+        <div style="font-size:12px;color:#9aa6bd">1,187 &middot; 24 clusters</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:11px;min-height:44px;padding:0 14px;border:1px solid #283042;background:#161a22;border-radius:14px">
+        <div style="width:8px;height:8px;border-radius:50%;background:#ffc978;flex:none"></div>
+        <div style="flex:1;font-weight:700;font-size:14px">CULTURE+NEWS</div>
+        <div style="font-size:12px;color:#9aa6bd">236 &middot; 11 clusters</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:11px;min-height:44px;padding:0 14px;border:1px solid #283042;background:#161a22;border-radius:14px">
+        <div style="width:8px;height:8px;border-radius:50%;background:#7fe0b0;flex:none"></div>
+        <div style="flex:1;font-weight:700;font-size:14px">KNOWLEDGE</div>
+        <div style="font-size:12px;color:#9aa6bd">152 &middot; 7 clusters</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:26px;flex-wrap:wrap">
       <div style="min-height:44px;display:flex;align-items:center;padding:0 16px;border:1px solid #283042;background:#161a22;border-radius:14px;color:#9aa6bd;font-size:13px;font-weight:600">Gallery</div>
       <div style="min-height:44px;display:flex;align-items:center;padding:0 16px;border:1px solid #283042;background:#161a22;border-radius:14px;color:#9aa6bd;font-size:13px;font-weight:600">Queue</div>
       <div style="min-height:44px;display:flex;align-items:center;padding:0 16px;border:1px solid #283042;background:#161a22;border-radius:14px;color:#9aa6bd;font-size:13px;font-weight:600">Brief</div>
